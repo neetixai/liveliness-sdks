@@ -24,7 +24,7 @@ const val DEFAULT_BASE_URL = "https://liveliness.neetix.in"
  * [ByteArray] to these suspend functions. All calls run on [Dispatchers.IO].
  *
  * Every billable call deducts prepaid credits (face-match 2, stream 5,
- * KYB 2, others 1). An exhausted balance throws [NeetixApiException] with
+ * KYB 2, document-id 2, others 1). An exhausted balance throws [NeetixApiException] with
  * `statusCode == 402` / `messageCode == "insufficient_credits"`.
  */
 class NeetixClient(
@@ -138,6 +138,26 @@ class NeetixClient(
     /** Parse + checksum-validate a passport/ID MRZ (2 or 3 lines). Cost: 1 credit. */
     suspend fun mrzParse(mrz: String): MrzResponse =
         postJson("/v1/document/mrz", buildJsonObject { put("mrz", mrz) })
+
+    /**
+     * US/CA driver's-license / state-ID parsing. [back] (the side with the
+     * PDF417 barcode) is decoded and AAMVA-parsed into
+     * [DocumentIdResponse.aamva] + [DocumentIdResponse.checks]; [front]
+     * (portrait side) runs face detection + document forensics. Send at
+     * least one image (400 otherwise). A back image with no readable barcode
+     * is NOT an error: you get a 200 with `checks.barcodeDecoded == false`
+     * and a `BARCODE_UNREADABLE` warning. Cost: 2 credits.
+     */
+    suspend fun documentId(
+        back: ByteArray? = null,
+        front: ByteArray? = null,
+    ): DocumentIdResponse = postMultipart(
+        "/v1/document/id",
+        buildMap {
+            back?.let { put("back", it) }
+            front?.let { put("front", it) }
+        },
+    )
 
     // ---------- Billing (prepaid credits) ----------
 

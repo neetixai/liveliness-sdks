@@ -19,6 +19,7 @@ import {
   type ImageInput,
   type AgeCheckResponse,
   type AuthVerifyResponse,
+  type DocumentIdResponse,
   type FaceMatchResponse,
   type FaceMatchOptions,
   type LivenessResponse,
@@ -44,6 +45,11 @@ export interface UseLiveliness {
     opts?: FaceMatchOptions,
   ) => Promise<FaceMatchResponse>;
   authVerify: (userId: string, selfieUri: string) => Promise<AuthVerifyResponse>;
+  /** US/CA DL/state-ID parsing — pass the back (barcode) and/or front uri. */
+  documentId: (images: {
+    backUri?: string;
+    frontUri?: string;
+  }) => Promise<DocumentIdResponse>;
 }
 
 /**
@@ -80,5 +86,12 @@ export function useLiveliness(opts: ClientOptions): UseLiveliness {
       run(() => client.faceMatch(fileFrom(selfieUri), fileFrom(cardUri), opts)),
     authVerify: (userId, selfieUri) =>
       run(() => client.authVerify(userId, fileFrom(selfieUri))),
+    documentId: ({ backUri, frontUri }) =>
+      run(() =>
+        client.documentId({
+          back: backUri ? fileFrom(backUri) : undefined,
+          front: frontUri ? fileFrom(frontUri) : undefined,
+        }),
+      ),
   };
 }

@@ -216,6 +216,161 @@ class MrzResponse {
       );
 }
 
+/// Address block inside [AamvaData].
+class AamvaAddress {
+  AamvaAddress({this.street, this.city, this.state, this.postal});
+  final String? street;
+  final String? city;
+  final String? state;
+  final String? postal;
+  factory AamvaAddress.fromJson(Map<String, dynamic> j) => AamvaAddress(
+        street: j['street'] as String?,
+        city: j['city'] as String?,
+        state: j['state'] as String?,
+        postal: j['postal'] as String?,
+      );
+}
+
+/// AAMVA payload decoded from the back-side PDF417 barcode of a US/CA
+/// driver's license / state ID (`POST /v1/document/id`). Elements absent
+/// from the barcode are null; [raw] carries the full map.
+class AamvaData {
+  AamvaData({
+    this.version,
+    this.issuerId,
+    this.docType,
+    this.firstName,
+    this.middleName,
+    this.lastName,
+    this.dob,
+    this.expiry,
+    this.issueDate,
+    this.licenseNumber,
+    required this.address,
+    this.sex,
+    this.height,
+    this.eyeColor,
+    this.country,
+    this.realIdCompliant,
+    required this.raw,
+  });
+
+  /// AAMVA standard version (1–10).
+  final int? version;
+
+  /// Issuer Identification Number (IIN, 6 digits).
+  final String? issuerId;
+  final String? docType; // "DL" | "ID"
+  final String? firstName;
+  final String? middleName;
+  final String? lastName;
+  final String? dob; // "YYYY-MM-DD"
+  final String? expiry; // "YYYY-MM-DD"
+  final String? issueDate;
+  final String? licenseNumber;
+  final AamvaAddress address;
+  final String? sex;
+  final String? height;
+  final String? eyeColor;
+  final String? country; // "USA" | "CAN"
+  final bool? realIdCompliant;
+  final Map<String, dynamic> raw;
+
+  factory AamvaData.fromJson(Map<String, dynamic> j) => AamvaData(
+        version: (j['version'] as num?)?.toInt(),
+        issuerId: j['issuer_id'] as String?,
+        docType: j['doc_type'] as String?,
+        firstName: j['first_name'] as String?,
+        middleName: j['middle_name'] as String?,
+        lastName: j['last_name'] as String?,
+        dob: j['dob'] as String?,
+        expiry: j['expiry'] as String?,
+        issueDate: j['issue_date'] as String?,
+        licenseNumber: j['license_number'] as String?,
+        address: AamvaAddress.fromJson(
+            (j['address'] as Map<String, dynamic>?) ?? const {}),
+        sex: j['sex'] as String?,
+        height: j['height'] as String?,
+        eyeColor: j['eye_color'] as String?,
+        country: j['country'] as String?,
+        realIdCompliant: j['real_id_compliant'] as bool?,
+        raw: j,
+      );
+}
+
+/// Decision inputs derived from the barcode; null = not evaluable.
+class DocumentIdChecks {
+  DocumentIdChecks({
+    required this.barcodeDecoded,
+    required this.aamvaParsed,
+    this.expired,
+    this.underage18,
+    this.underage21,
+    this.datesValid,
+  });
+  final bool barcodeDecoded;
+  final bool aamvaParsed;
+  final bool? expired;
+  final bool? underage18;
+  final bool? underage21;
+  final bool? datesValid;
+  factory DocumentIdChecks.fromJson(Map<String, dynamic> j) => DocumentIdChecks(
+        barcodeDecoded: (j['barcode_decoded'] as bool?) ?? false,
+        aamvaParsed: (j['aamva_parsed'] as bool?) ?? false,
+        expired: j['expired'] as bool?,
+        underage18: j['underage_18'] as bool?,
+        underage21: j['underage_21'] as bool?,
+        datesValid: j['dates_valid'] as bool?,
+      );
+}
+
+/// `POST /v1/document/id` — DL/state-ID parsing: back-side PDF417 → AAMVA
+/// ([aamva] + [checks]), optional front-side face detection ([faceFound]) +
+/// document forensics ([forensics]). Warning codes: `DOCUMENT_EXPIRED`,
+/// `DOCUMENT_UNDERAGE_18`, `DOCUMENT_UNDERAGE_21`, `BARCODE_UNREADABLE`,
+/// `DOCUMENT_SCREEN_REPLAY`, `DOCUMENT_TAMPER`.
+class DocumentIdResponse {
+  DocumentIdResponse({
+    required this.status,
+    this.aamva,
+    required this.checks,
+    this.faceFound,
+    this.forensics,
+    required this.warnings,
+    required this.raw,
+  });
+  final String status;
+
+  /// Null when the barcode couldn't be decoded/parsed.
+  final AamvaData? aamva;
+  final DocumentIdChecks checks;
+
+  /// Only when a `front` image was sent; null otherwise.
+  final bool? faceFound;
+
+  /// Front-side screen-replay/tamper signals (screen_replay_score,
+  /// synthetic_score, …); null without a `front` image.
+  final Map<String, dynamic>? forensics;
+  final List<ApiWarning> warnings;
+  final Map<String, dynamic> raw;
+
+  factory DocumentIdResponse.fromJson(Map<String, dynamic> j) =>
+      DocumentIdResponse(
+        status: (j['status'] as String?) ?? '',
+        aamva: j['aamva'] is Map<String, dynamic>
+            ? AamvaData.fromJson(j['aamva'] as Map<String, dynamic>)
+            : null,
+        checks: DocumentIdChecks.fromJson(
+            (j['checks'] as Map<String, dynamic>?) ?? const {}),
+        faceFound: j['face_found'] as bool?,
+        forensics: j['forensics'] as Map<String, dynamic>?,
+        warnings: ((j['warnings'] as List<dynamic>?) ?? const [])
+            .map((w) => ApiWarning.fromJson(w as Map<String, dynamic>))
+            .toList(),
+        raw: j,
+      );
+}
+
 /// `POST /v1/auth/verify`
 class AuthVerifyResponse {
   AuthVerifyResponse({

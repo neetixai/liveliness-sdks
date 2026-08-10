@@ -11,7 +11,7 @@ const String kDefaultBaseUrl = 'https://liveliness.neetix.in';
 /// (`camera` / `image_picker`) as `List<int>` JPEG bytes.
 ///
 /// Every billable call deducts prepaid credits (face-match 2, stream 5,
-/// KYB 2, others 1). An exhausted balance throws [NeetixApiException] with
+/// KYB 2, document-id 2, others 1). An exhausted balance throws [NeetixApiException] with
 /// `statusCode == 402` / `messageCode == 'insufficient_credits'`.
 class NeetixClient {
   NeetixClient({String baseUrl = kDefaultBaseUrl, this.apiKey, http.Client? httpClient})
@@ -135,6 +135,21 @@ class NeetixClient {
   Future<MrzResponse> mrzParse(String mrz) async {
     final json = await _postJson('/v1/document/mrz', {'mrz': mrz});
     return MrzResponse.fromJson(json);
+  }
+
+  /// US/CA driver's-license / state-ID parsing. [back] (the side with the
+  /// PDF417 barcode) is decoded and AAMVA-parsed into `aamva` + `checks`;
+  /// [front] (portrait side) runs face detection (`faceFound`) + document
+  /// forensics. Send at least one image (400 otherwise). A back image with
+  /// no readable barcode is NOT an error: you get a 200 with
+  /// `checks.barcodeDecoded == false` and a `BARCODE_UNREADABLE` warning.
+  /// Cost: 2 credits.
+  Future<DocumentIdResponse> documentId({List<int>? back, List<int>? front}) async {
+    final json = await _multipart('/v1/document/id', {
+      if (back != null) 'back': back,
+      if (front != null) 'front': front,
+    });
+    return DocumentIdResponse.fromJson(json);
   }
 
   // ---------- Billing (prepaid credits) ----------

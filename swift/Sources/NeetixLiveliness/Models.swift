@@ -312,6 +312,106 @@ public struct MrzResponse: Codable {
     }
 }
 
+/// Address block inside `aamva` from `POST /v1/document/id`.
+public struct AamvaAddress: Codable {
+    public let street: String?
+    public let city: String?
+    public let state: String?
+    public let postal: String?
+}
+
+/// AAMVA payload decoded from the back-side PDF417 barcode of a US/CA
+/// driver's license / state ID. Elements absent from the barcode are null.
+public struct AamvaData: Codable {
+    /// AAMVA standard version (1–10).
+    public let version: Int?
+    /// Issuer Identification Number (IIN, 6 digits).
+    public let issuerId: String?
+    public let docType: String? // "DL" | "ID"
+    public let firstName: String?
+    public let middleName: String?
+    public let lastName: String?
+    public let dob: String? // "YYYY-MM-DD"
+    public let expiry: String? // "YYYY-MM-DD"
+    public let issueDate: String?
+    public let licenseNumber: String?
+    public let address: AamvaAddress?
+    public let sex: String?
+    public let height: String?
+    public let eyeColor: String?
+    public let country: String? // "USA" | "CAN"
+    public let realIdCompliant: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case version, dob, expiry, address, sex, height, country
+        case issuerId = "issuer_id"
+        case docType = "doc_type"
+        case firstName = "first_name"
+        case middleName = "middle_name"
+        case lastName = "last_name"
+        case issueDate = "issue_date"
+        case licenseNumber = "license_number"
+        case eyeColor = "eye_color"
+        case realIdCompliant = "real_id_compliant"
+    }
+}
+
+/// Decision inputs derived from the barcode; nil = not evaluable.
+public struct DocumentIdChecks: Codable {
+    public let barcodeDecoded: Bool
+    public let aamvaParsed: Bool
+    public let expired: Bool?
+    public let underage18: Bool?
+    public let underage21: Bool?
+    public let datesValid: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case expired
+        case barcodeDecoded = "barcode_decoded"
+        case aamvaParsed = "aamva_parsed"
+        case underage18 = "underage_18"
+        case underage21 = "underage_21"
+        case datesValid = "dates_valid"
+    }
+}
+
+/// Front-side screen-replay/tamper forensic signals from `POST /v1/document/id`.
+public struct DocumentForensics: Codable {
+    public let screenReplayScore: Double?
+    public let syntheticScore: Double?
+    public let highFreqRatio: Double?
+    public let spectralPeak: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case screenReplayScore = "screen_replay_score"
+        case syntheticScore = "synthetic_score"
+        case highFreqRatio = "high_freq_ratio"
+        case spectralPeak = "spectral_peak"
+    }
+}
+
+/// `POST /v1/document/id` — DL/state-ID parsing: back-side PDF417 → AAMVA
+/// (`aamva` + `checks`), optional front-side face detection + document
+/// forensics. Warning codes: `DOCUMENT_EXPIRED`, `DOCUMENT_UNDERAGE_18`,
+/// `DOCUMENT_UNDERAGE_21`, `BARCODE_UNREADABLE`, `DOCUMENT_SCREEN_REPLAY`,
+/// `DOCUMENT_TAMPER`.
+public struct DocumentIdResponse: Codable {
+    public let status: String
+    /// Nil when the barcode couldn't be decoded/parsed.
+    public let aamva: AamvaData?
+    public let checks: DocumentIdChecks
+    /// Only when a `front` image was sent; nil otherwise.
+    public let faceFound: Bool?
+    /// Front-side screen-replay/tamper signals; nil without a `front` image.
+    public let forensics: DocumentForensics?
+    public let warnings: [ApiWarning]
+
+    enum CodingKeys: String, CodingKey {
+        case status, aamva, checks, forensics, warnings
+        case faceFound = "face_found"
+    }
+}
+
 /// `GET /v1/billing/balance`
 public struct BalanceResponse: Codable {
     public let status: String

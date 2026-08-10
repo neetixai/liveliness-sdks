@@ -152,6 +152,81 @@ data class MrzResponse(
     val checks: MrzChecks,
 )
 
+/** Address block inside [AamvaData] from `POST /v1/document/id`. */
+@Serializable
+data class AamvaAddress(
+    val street: String? = null,
+    val city: String? = null,
+    val state: String? = null,
+    val postal: String? = null,
+)
+
+/**
+ * AAMVA payload decoded from the back-side PDF417 barcode of a US/CA
+ * driver's license / state ID. Elements absent from the barcode are null.
+ */
+@Serializable
+data class AamvaData(
+    /** AAMVA standard version (1–10). */
+    val version: Int? = null,
+    /** Issuer Identification Number (IIN, 6 digits). */
+    @SerialName("issuer_id") val issuerId: String? = null,
+    @SerialName("doc_type") val docType: String? = null, // "DL" | "ID"
+    @SerialName("first_name") val firstName: String? = null,
+    @SerialName("middle_name") val middleName: String? = null,
+    @SerialName("last_name") val lastName: String? = null,
+    val dob: String? = null, // "YYYY-MM-DD"
+    val expiry: String? = null, // "YYYY-MM-DD"
+    @SerialName("issue_date") val issueDate: String? = null,
+    @SerialName("license_number") val licenseNumber: String? = null,
+    val address: AamvaAddress? = null,
+    val sex: String? = null,
+    val height: String? = null,
+    @SerialName("eye_color") val eyeColor: String? = null,
+    val country: String? = null, // "USA" | "CAN"
+    @SerialName("real_id_compliant") val realIdCompliant: Boolean? = null,
+)
+
+/** Decision inputs derived from the barcode; null = not evaluable. */
+@Serializable
+data class DocumentIdChecks(
+    @SerialName("barcode_decoded") val barcodeDecoded: Boolean = false,
+    @SerialName("aamva_parsed") val aamvaParsed: Boolean = false,
+    val expired: Boolean? = null,
+    @SerialName("underage_18") val underage18: Boolean? = null,
+    @SerialName("underage_21") val underage21: Boolean? = null,
+    @SerialName("dates_valid") val datesValid: Boolean? = null,
+)
+
+/** Front-side screen-replay/tamper forensic signals from `POST /v1/document/id`. */
+@Serializable
+data class DocumentForensics(
+    @SerialName("screen_replay_score") val screenReplayScore: Double? = null,
+    @SerialName("synthetic_score") val syntheticScore: Double? = null,
+    @SerialName("high_freq_ratio") val highFreqRatio: Double? = null,
+    @SerialName("spectral_peak") val spectralPeak: Double? = null,
+)
+
+/**
+ * `POST /v1/document/id` — DL/state-ID parsing: back-side PDF417 → AAMVA
+ * ([aamva] + [checks]), optional front-side face detection ([faceFound]) +
+ * document forensics ([forensics]). Warning codes: `DOCUMENT_EXPIRED`,
+ * `DOCUMENT_UNDERAGE_18`, `DOCUMENT_UNDERAGE_21`, `BARCODE_UNREADABLE`,
+ * `DOCUMENT_SCREEN_REPLAY`, `DOCUMENT_TAMPER`.
+ */
+@Serializable
+data class DocumentIdResponse(
+    val status: String = "",
+    /** Null when the barcode couldn't be decoded/parsed. */
+    val aamva: AamvaData? = null,
+    val checks: DocumentIdChecks = DocumentIdChecks(),
+    /** Only when a `front` image was sent; null otherwise. */
+    @SerialName("face_found") val faceFound: Boolean? = null,
+    /** Front-side screen-replay/tamper signals; null without a `front` image. */
+    val forensics: DocumentForensics? = null,
+    val warnings: List<ApiWarning> = emptyList(),
+)
+
 /** `GET /v1/billing/balance` */
 @Serializable
 data class BalanceResponse(

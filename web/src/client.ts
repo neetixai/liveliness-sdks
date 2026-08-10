@@ -5,6 +5,7 @@ import type {
   AuthVerifyResponse,
   BalanceResponse,
   ClientOptions,
+  DocumentIdResponse,
   FaceMatchResponse,
   KybValidateResponse,
   LedgerResponse,
@@ -23,6 +24,14 @@ export const DEFAULT_BASE_URL = "https://liveliness.neetix.in";
 /** Anything postable as a file part: a browser/Node Blob, or `{ uri }` for RN. */
 export type ImageInput = Blob | { uri: string; name?: string; type?: string };
 
+/** Images for `documentId` — at least one of `back` / `front` is required. */
+export interface DocumentIdImages {
+  /** Back of the card — the side with the PDF417 barcode. */
+  back?: ImageInput;
+  /** Front (portrait) side. */
+  front?: ImageInput;
+}
+
 /** Optional extra fields for `faceMatch`. */
 export interface FaceMatchOptions {
   clientRefId?: string;
@@ -38,7 +47,7 @@ export interface FaceMatchOptions {
  * image part).
  *
  * Every billable call deducts prepaid credits (face-match 2, stream 5,
- * KYB 2, workflow 3, others 1); an exhausted balance throws a
+ * KYB 2, document-id 2, workflow 3, others 1); an exhausted balance throws a
  * `NeetixApiError` with `status === 402` and
  * `messageCode === "insufficient_credits"`.
  */
@@ -178,6 +187,22 @@ export class NeetixClient {
   /** Parse + checksum-validate a passport/ID MRZ (2 or 3 lines). Cost: 1 credit. */
   async mrzParse(mrz: string): Promise<MrzResponse> {
     return this.postJson<MrzResponse>("/v1/document/mrz", { mrz });
+  }
+
+  /**
+   * US/CA driver's-license / state-ID parsing. `back` (the side with the
+   * PDF417 barcode) is decoded and AAMVA-parsed into `aamva` + `checks`;
+   * `front` (portrait side) runs face detection (`face_found`) + document
+   * forensics. Send at least one image (400 otherwise). A back image with
+   * no readable barcode is NOT an error: you get a 200 with
+   * `checks.barcode_decoded === false` and a `BARCODE_UNREADABLE` warning.
+   * Cost: 2 credits.
+   */
+  async documentId(images: DocumentIdImages): Promise<DocumentIdResponse> {
+    const form = new FormData();
+    if (images.back) this.appendImage(form, "back", images.back);
+    if (images.front) this.appendImage(form, "front", images.front);
+    return this.postForm<DocumentIdResponse>("/v1/document/id", form);
   }
 
   // ---------- Billing (prepaid credits) ----------

@@ -260,6 +260,71 @@ export interface MrzResponse {
   };
 }
 
+/** Address block inside `aamva` from `POST /v1/document/id`. */
+export interface AamvaAddress {
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  postal: string | null;
+}
+
+/**
+ * AAMVA payload decoded from the back-side PDF417 barcode of a US/CA
+ * driver's license / state ID. Elements absent from the barcode are `null`.
+ */
+export interface AamvaData {
+  /** AAMVA standard version (1–10). */
+  version: number;
+  /** Issuer Identification Number (IIN, 6 digits). */
+  issuer_id: string;
+  doc_type: "DL" | "ID";
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  /** "YYYY-MM-DD" */
+  dob: string | null;
+  /** "YYYY-MM-DD" */
+  expiry: string | null;
+  issue_date: string | null;
+  license_number: string | null;
+  address: AamvaAddress;
+  sex: string | null;
+  height: string | null;
+  eye_color: string | null;
+  country: "USA" | "CAN" | null;
+  real_id_compliant: boolean | null;
+  [key: string]: unknown;
+}
+
+/** Decision inputs derived from the barcode; null = not evaluable. */
+export interface DocumentIdChecks {
+  barcode_decoded: boolean;
+  aamva_parsed: boolean;
+  expired: boolean | null;
+  underage_18: boolean | null;
+  underage_21: boolean | null;
+  dates_valid: boolean | null;
+}
+
+/**
+ * `POST /v1/document/id` — DL/state-ID parsing: back-side PDF417 → AAMVA,
+ * optional front-side face detection + document forensics. Warning codes:
+ * `DOCUMENT_EXPIRED`, `DOCUMENT_UNDERAGE_18`, `DOCUMENT_UNDERAGE_21`,
+ * `BARCODE_UNREADABLE`, `DOCUMENT_SCREEN_REPLAY`, `DOCUMENT_TAMPER`.
+ */
+export interface DocumentIdResponse {
+  status: string;
+  /** null when the barcode couldn't be decoded/parsed. */
+  aamva: AamvaData | null;
+  checks: DocumentIdChecks;
+  /** Only when a `front` image was sent; null otherwise. */
+  face_found: boolean | null;
+  /** Front-side screen-replay/tamper signals; null without a `front` image. */
+  forensics: Forensics | null;
+  warnings: Warning[];
+  [key: string]: unknown;
+}
+
 // ---------- Billing (prepaid credits) ----------
 
 /** `GET /v1/billing/balance` */

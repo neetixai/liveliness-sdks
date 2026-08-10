@@ -55,6 +55,7 @@ console.log(res.verdict, res.result.is_same_face, res.warnings);
 | `amlScreen(name, dob?, threshold?)` | `POST /v1/aml/screen` | 1 | `AmlScreenResponse` — `hit`, `matches[]` |
 | `kybValidate({gstin, pan, cin})` | `POST /v1/kyb/validate` | 2 | `KybValidateResponse` |
 | `mrzParse(mrz)` | `POST /v1/document/mrz` | 1 | `MrzResponse` |
+| `documentId({back?, front?})` | `POST /v1/document/id` | 2 | `DocumentIdResponse` — PDF417→AAMVA parse (`aamva`, `checks`), front-side `face_found` + `forensics`; at least one image required |
 | `balance()` | `GET /v1/billing/balance` | — | `BalanceResponse` |
 | `ledger(limit?)` | `GET /v1/billing/ledger` | — | `LedgerResponse` |
 | `packs()` | `GET /v1/billing/packs` | — | `PacksResponse` |

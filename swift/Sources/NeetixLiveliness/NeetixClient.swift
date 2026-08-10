@@ -39,7 +39,7 @@ public enum ImageInput {
 /// `#if canImport(UIKit)`.
 ///
 /// Every billable call deducts prepaid credits (face-match 2, stream 5,
-/// KYB 2, others 1). An exhausted balance throws
+/// KYB 2, document-id 2, others 1). An exhausted balance throws
 /// `NeetixError.api(status: 402, messageCode: "insufficient_credits", …)`.
 public final class NeetixClient {
     public static let defaultBaseURL = "https://liveliness.neetix.in"
@@ -158,6 +158,22 @@ public final class NeetixClient {
     /// Parse + checksum-validate a passport/ID MRZ (2 or 3 lines). Cost: 1 credit.
     public func mrzParse(_ mrz: String) async throws -> MrzResponse {
         try await postJSON("/v1/document/mrz", body: ["mrz": mrz])
+    }
+
+    /// US/CA driver's-license / state-ID parsing. `back` (the side with the
+    /// PDF417 barcode) is decoded and AAMVA-parsed into `aamva` + `checks`;
+    /// `front` (portrait side) runs face detection (`faceFound`) + document
+    /// forensics. Send at least one image (400 otherwise). A back image with
+    /// no readable barcode is NOT an error: you get a 200 with
+    /// `checks.barcodeDecoded == false` and a `BARCODE_UNREADABLE` warning.
+    /// Cost: 2 credits.
+    public func documentId(
+        back: ImageInput? = nil, front: ImageInput? = nil
+    ) async throws -> DocumentIdResponse {
+        var images: [(String, ImageInput)] = []
+        if let back { images.append(("back", back)) }
+        if let front { images.append(("front", front)) }
+        return try await postMultipart("/v1/document/id", images: images)
     }
 
     // MARK: - Billing (prepaid credits)

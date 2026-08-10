@@ -12,8 +12,8 @@ This package is a thin layer over `@neetix/liveliness` (the web/Node SDK) and
 re-exports it wholesale. The core client is framework-agnostic: it accepts
 `{ uri }` file parts (RN's FormData convention) and uses RN's global `fetch`.
 So `client.signup / faceMatch / liveness / ageCheck / amlScreen / mrzParse /
-balance / ledger / sessionStart / streamStart / kybValidate / packs / topup`
-are all available — see the [web SDK README](../web/README.md) for the full
+documentId / balance / ledger / sessionStart / streamStart / kybValidate /
+packs / topup` are all available — see the [web SDK README](../web/README.md) for the full
 method table; only the capture layer is RN-specific.
 
 Camera capture is BYO: use `react-native-vision-camera` or `expo-camera`,
@@ -61,6 +61,7 @@ function KycScreen() {
 | `ageCheck(selfieUri)` | Selfie age estimation (1 credit; new endpoint) |
 | `faceMatch(selfieUri, cardUri, opts?)` | 1:1 match + liveliness (2 credits) |
 | `authVerify(userId, selfieUri)` | Biometric re-authentication (1 credit) |
+| `documentId({backUri?, frontUri?})` | US/CA DL/state-ID barcode parse + front forensics (2 credits; at least one image) |
 
 Errors are `NeetixApiError` with `status` + `messageCode`
 (`insufficient_credits` on HTTP 402 = top up at `/v1/billing/topup`).

@@ -56,6 +56,7 @@ if (res.approved) proceed() else review(res.verdict, res.warnings)
 | `amlScreen(name, dob, threshold)` | `POST /v1/aml/screen` | 1 | `AmlScreenResponse` |
 | `kybValidate(gstin, pan, cin)` | `POST /v1/kyb/validate` | 2 | raw `JsonObject` |
 | `mrzParse(mrz)` | `POST /v1/document/mrz` | 1 | `MrzResponse` |
+| `documentId(back, front)` | `POST /v1/document/id` | 2 | `DocumentIdResponse` — PDF417→AAMVA parse (`aamva`, `checks`), front-side `faceFound` + `forensics`; at least one image required |
 | `balance()` | `GET /v1/billing/balance` | — | `BalanceResponse` |
 | `ledger(limit)` | `GET /v1/billing/ledger` | — | `LedgerResponse` |
 | `packs()` / `topup(pack, email)` | `GET/POST /v1/billing/…` | — | `PacksResponse` / `TopupResponse` (open `checkoutUrl`) |
