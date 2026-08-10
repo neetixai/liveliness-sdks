@@ -1,0 +1,26 @@
+# Node
+node_modules/
+web/dist/
+react-native/dist/
+*.tsbuildinfo
+
+# Dart / Flutter
+.dart_tool/
+.packages
+pubspec.lock
+build/
+
+# Swift
+.build/
+.swiftpm/
+DerivedData/
+
+# Android / Gradle
+.gradle/
+local.properties
+*.iml
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

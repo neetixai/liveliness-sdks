@@ -1,0 +1,40 @@
+{
+  "name": "@neetix/liveliness-react-native",
+  "version": "0.1.0",
+  "description": "React Native wrapper for the Neetix Liveliness API — hooks + file helpers over the shared @neetix/liveliness transport client.",
+  "license": "Apache-2.0",
+  "author": "Neetix",
+  "homepage": "https://liveliness.neetix.in",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neetixai/liveliness-sdks.git",
+    "directory": "react-native"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@neetix/liveliness": "file:../web"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "react": "^18.3.0",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "react-native",
+    "kyc",
+    "liveness",
+    "face-match",
+    "neetix"
+  ]
+}
