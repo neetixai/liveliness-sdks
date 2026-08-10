@@ -41,7 +41,7 @@ data class LivenessResponse(
 data class AgeCheckResponse(
     val status: String = "",
     @SerialName("age_bracket") val ageBracket: String? = null,
-    @SerialName("estimated_age") val estimatedAge: Double? = null,
+    @SerialName("age_estimate") val estimatedAge: Double? = null,
     @SerialName("is_adult") val isAdult: Boolean? = null,
     val verdict: String? = null,
     val warnings: List<ApiWarning> = emptyList(),

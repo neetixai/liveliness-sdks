@@ -78,7 +78,7 @@ class AgeCheckResponse {
   factory AgeCheckResponse.fromJson(Map<String, dynamic> j) => AgeCheckResponse(
         status: (j['status'] as String?) ?? '',
         ageBracket: j['age_bracket'] as String?,
-        estimatedAge: (j['estimated_age'] as num?)?.toDouble(),
+        estimatedAge: (j['age_estimate'] as num?)?.toDouble(),
         isAdult: j['is_adult'] as bool?,
         raw: j,
       );

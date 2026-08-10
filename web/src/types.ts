@@ -95,11 +95,13 @@ export interface LivenessResponse {
  */
 export interface AgeCheckResponse {
   status: string;
-  age_bracket?: string;
-  estimated_age?: number;
-  is_adult?: boolean;
-  verdict?: Verdict;
-  warnings?: Warning[];
+  /** e.g. "20-29"; "unknown" on the tract fallback backend. */
+  age_bracket: string;
+  /** Bracket midpoint estimate; null when unavailable. */
+  age_estimate: number | null;
+  face_count: number;
+  /** 0-100; null when liveness wasn't evaluated. */
+  liveness_score: number | null;
   [key: string]: unknown;
 }
 

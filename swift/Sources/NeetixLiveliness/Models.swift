@@ -52,7 +52,7 @@ public struct AgeCheckResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case status, verdict, warnings
         case ageBracket = "age_bracket"
-        case estimatedAge = "estimated_age"
+        case estimatedAge = "age_estimate"
         case isAdult = "is_adult"
     }
 }
