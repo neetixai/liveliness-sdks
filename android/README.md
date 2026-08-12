@@ -4,7 +4,7 @@ Kotlin client (OkHttp + kotlinx-serialization, coroutines) for the
 [Neetix Liveliness API](https://liveliness.neetix.in). Capture JPEG bytes
 with CameraX and pass them to the suspend functions.
 
-Status: **pre-release, uncompiled**. Honest disclosure: this module has NOT
+Status: **beta (JVM-compiled + live-verified), JVM-compiled (kotlinc 2.1/JDK 21; 0 errors) and runtime-verified against production — Android-instrumented tests still pending**. Honest disclosure: this module has NOT
 been compiled or tested in this repo — the repo's CI has no JDK/Android
 toolchain (see `.github/workflows/ci.yml`). The code is idiomatic Kotlin
 mirroring the verified Swift/TypeScript clients, written against AGP 8.x /

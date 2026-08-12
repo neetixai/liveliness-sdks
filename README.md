@@ -51,7 +51,7 @@ Runnable end-to-end version (signup → age check → face match → balance):
 | Flutter / Dart | [`neetix_liveliness`](flutter/) | **beta** | git dependency, `path: flutter` — see [flutter/README.md](flutter/README.md) |
 | iOS / macOS (Swift) | [`NeetixLiveliness`](swift/) | **beta** | SPM: `.package(url: "https://github.com/neetixai/liveliness-sdks", branch: "main")` |
 | React Native | [`@neetix/liveliness-react-native`](react-native/) | **pre-release** | clone + `npm i ./liveliness-sdks/react-native` — see [react-native/README.md](react-native/README.md) |
-| Android (Kotlin) | [`in.neetix.liveliness`](android/) | **pre-release** (written, not compiled in CI) | source drop-in / Gradle included module — see [android/README.md](android/README.md) |
+| Android (Kotlin) | [`in.neetix.liveliness`](android/) | **beta** (JVM-compiled in CI + live-verified; instrumented tests pending) | source drop-in / Gradle included module — see [android/README.md](android/README.md) |
 
 Status honesty: *beta* SDKs are typechecked/compiled + unit-tested in CI and
 the TS core has been exercised against the live API; *pre-release* SDKs share
