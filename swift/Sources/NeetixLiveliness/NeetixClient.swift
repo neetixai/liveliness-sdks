@@ -10,6 +10,9 @@ public enum NeetixError: Error {
     case api(status: Int, messageCode: String?, message: String, body: Data)
     case decoding(String)
     case transport(Error)
+    /// The feature isn't available on this platform/device (e.g. App Attest
+    /// on the simulator, macOS, or Linux).
+    case unsupported(String)
 
     /// True when the prepaid balance is exhausted (HTTP 402).
     public var isInsufficientCredits: Bool {
@@ -69,17 +72,36 @@ public final class NeetixClient {
     // MARK: - Face & liveliness
 
     /// Passive liveliness on a single selfie. Cost: 1 credit.
-    public func liveness(person: ImageInput) async throws -> LivenessResponse {
-        try await postMultipart("/v1/liveness", images: [("person", person)])
+    ///
+    /// Optionally attach an App Attest proof (`NeetixAttestation.attest`)
+    /// plus the `captureNonce` used as its challenge — the response then
+    /// carries an `attestation` verification block.
+    public func liveness(
+        person: ImageInput,
+        captureNonce: String? = nil,
+        attestation: NeetixAttestationPayload? = nil
+    ) async throws -> LivenessResponse {
+        try await postMultipart(
+            "/v1/liveness",
+            images: [("person", person)],
+            fields: attestedFields([:], captureNonce: captureNonce, attestation: attestation)
+        )
     }
 
     /// Face match + liveliness (selfie vs ID/reference). Cost: 2 credits.
     /// Inspect `verdict` (`approved | review | declined`) and `warnings`.
+    ///
+    /// Optionally attach an App Attest proof (`NeetixAttestation.attest`)
+    /// plus the `captureNonce` used as its challenge — the response then
+    /// carries an `attestation` verification block; a failed verification
+    /// adds an `ATTESTATION_FAILED` warning.
     public func faceMatch(
         person: ImageInput,
         card: ImageInput,
         clientRefId: String? = nil,
         customerId: String? = nil,
+        captureNonce: String? = nil,
+        attestation: NeetixAttestationPayload? = nil,
         extraFields: [String: String] = [:]
     ) async throws -> FaceMatchResponse {
         var fields = extraFields
@@ -88,14 +110,23 @@ public final class NeetixClient {
         return try await postMultipart(
             "/v1/face/face-match",
             images: [("person", person), ("card", card)],
-            fields: fields
+            fields: attestedFields(fields, captureNonce: captureNonce, attestation: attestation)
         )
     }
 
     /// Selfie age estimation. Cost: 1 credit.
     /// New endpoint — older deployments return 404 (`messageCode: "not_found"`).
-    public func ageCheck(person: ImageInput) async throws -> AgeCheckResponse {
-        try await postMultipart("/v1/age", images: [("person", person)])
+    /// Supports the same optional attestation params as `faceMatch`.
+    public func ageCheck(
+        person: ImageInput,
+        captureNonce: String? = nil,
+        attestation: NeetixAttestationPayload? = nil
+    ) async throws -> AgeCheckResponse {
+        try await postMultipart(
+            "/v1/age",
+            images: [("person", person)],
+            fields: attestedFields([:], captureNonce: captureNonce, attestation: attestation)
+        )
     }
 
     // MARK: - Active-challenge liveliness
@@ -201,6 +232,27 @@ public final class NeetixClient {
     }
 
     // MARK: - Transport
+
+    /// Merge optional capture-nonce + device-attestation multipart fields
+    /// into `base` per the server contract: `attest_platform`,
+    /// `attest_token`, `attest_key_id` (iOS only) and `capture_nonce`.
+    /// Absent fields keep current server behavior. Internal for tests.
+    func attestedFields(
+        _ base: [String: String],
+        captureNonce: String?,
+        attestation: NeetixAttestationPayload?
+    ) -> [String: String] {
+        var fields = base
+        if let captureNonce { fields["capture_nonce"] = captureNonce }
+        if let attestation {
+            fields["attest_platform"] = attestation.platform
+            fields["attest_token"] = attestation.attestationObjectBase64
+            if !attestation.keyId.isEmpty {
+                fields["attest_key_id"] = attestation.keyId
+            }
+        }
+        return fields
+    }
 
     private func request(_ path: String, method: String, authenticated: Bool = true) -> URLRequest {
         var req = URLRequest(url: URL(string: baseURL.absoluteString + path)!)

@@ -7,6 +7,17 @@ public struct ApiWarning: Codable {
     public let description: String
 }
 
+/// Server-side device-attestation verdict (`attestation` on face-match,
+/// liveness and age responses). Nil unless the request carried
+/// `attest_platform`/`attest_token`. `verified == false` adds an
+/// `ATTESTATION_FAILED` warning (severity `review`; declines when the
+/// server runs with `[attestation].require`).
+public struct AttestationVerification: Codable {
+    public let platform: String // "ios" | "android"
+    public let verified: Bool
+    public let detail: String?
+}
+
 /// `POST /v1/signup` — the `apiKey` is shown ONCE; persist it.
 public struct SignupResponse: Codable {
     public let status: String
@@ -28,11 +39,13 @@ public struct LivenessResponse: Codable {
     public let livenessScore: Double
     public let livenessStatus: String
     public let faceCount: Int?
+    /// Present only when the request carried attestation fields.
+    public let attestation: AttestationVerification?
 
     public var approved: Bool { status == "Approved" }
 
     enum CodingKeys: String, CodingKey {
-        case status
+        case status, attestation
         case livenessScore = "liveness_score"
         case livenessStatus = "liveness_status"
         case faceCount = "face_count"
@@ -48,9 +61,11 @@ public struct AgeCheckResponse: Codable {
     public let isAdult: Bool?
     public let verdict: String?
     public let warnings: [ApiWarning]?
+    /// Present only when the request carried attestation fields.
+    public let attestation: AttestationVerification?
 
     enum CodingKeys: String, CodingKey {
-        case status, verdict, warnings
+        case status, verdict, warnings, attestation
         case ageBracket = "age_bracket"
         case estimatedAge = "age_estimate"
         case isAdult = "is_adult"
@@ -121,6 +136,8 @@ public struct FaceMatchResponse: Codable {
     public let verdict: String // "approved" | "review" | "declined"
     public let warnings: [ApiWarning]
     public let result: FaceMatchResult
+    /// Present only when the request carried attestation fields.
+    public let attestation: AttestationVerification?
 
     public var approved: Bool { verdict == "approved" }
 }

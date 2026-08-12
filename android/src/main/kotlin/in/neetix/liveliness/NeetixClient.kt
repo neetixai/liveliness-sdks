@@ -46,24 +46,43 @@ class NeetixClient(
 
     // ---------- Face & liveliness ----------
 
-    /** Passive liveliness on a single selfie. Cost: 1 credit. */
-    suspend fun liveness(person: ByteArray): LivenessResponse =
-        postMultipart("/v1/liveness", mapOf("person" to person))
+    /**
+     * Passive liveliness on a single selfie. Cost: 1 credit.
+     *
+     * [captureNonce] + [attestation] optionally bind the capture to a device
+     * attestation (Play Integrity / App Attest) — see [Attestation]. The
+     * response then carries [LivenessResponse.attestation].
+     */
+    suspend fun liveness(
+        person: ByteArray,
+        captureNonce: String? = null,
+        attestation: Attestation? = null,
+    ): LivenessResponse = postMultipart(
+        "/v1/liveness",
+        mapOf("person" to person),
+        attestationFields(captureNonce, attestation),
+    )
 
     /**
      * Face match + liveliness (selfie vs ID/reference). Cost: 2 credits.
      * Inspect [FaceMatchResponse.verdict] and [FaceMatchResponse.warnings].
+     *
+     * [captureNonce] + [attestation] optionally bind the capture to a device
+     * attestation (Play Integrity / App Attest) — see [Attestation].
      */
     suspend fun faceMatch(
         person: ByteArray,
         card: ByteArray,
         clientRefId: String? = null,
         customerId: String? = null,
+        captureNonce: String? = null,
+        attestation: Attestation? = null,
         extraFields: Map<String, String> = emptyMap(),
     ): FaceMatchResponse {
         val fields = buildMap {
             clientRefId?.let { put("client_ref_id", it) }
             customerId?.let { put("customer_id", it) }
+            putAll(attestationFields(captureNonce, attestation))
             putAll(extraFields)
         }
         return postMultipart("/v1/face/face-match", mapOf("person" to person, "card" to card), fields)
@@ -72,9 +91,19 @@ class NeetixClient(
     /**
      * Selfie age estimation. Cost: 1 credit.
      * New endpoint — older deployments return 404 (`messageCode: "not_found"`).
+     *
+     * [captureNonce] + [attestation] optionally bind the capture to a device
+     * attestation (Play Integrity / App Attest) — see [Attestation].
      */
-    suspend fun ageCheck(person: ByteArray): AgeCheckResponse =
-        postMultipart("/v1/age", mapOf("person" to person))
+    suspend fun ageCheck(
+        person: ByteArray,
+        captureNonce: String? = null,
+        attestation: Attestation? = null,
+    ): AgeCheckResponse = postMultipart(
+        "/v1/age",
+        mapOf("person" to person),
+        attestationFields(captureNonce, attestation),
+    )
 
     // ---------- Active-challenge liveliness ----------
 
@@ -181,6 +210,23 @@ class NeetixClient(
     )
 
     // ---------- Transport ----------
+
+    /**
+     * Optional attestation multipart fields (`capture_nonce`,
+     * `attest_platform`, `attest_token`, `attest_key_id`). Empty when both
+     * args are null — absent fields keep current server behavior.
+     */
+    private fun attestationFields(
+        captureNonce: String?,
+        attestation: Attestation?,
+    ): Map<String, String> = buildMap {
+        captureNonce?.let { put("capture_nonce", it) }
+        attestation?.let {
+            put("attest_platform", it.platform)
+            put("attest_token", it.token)
+            it.keyId?.let { keyId -> put("attest_key_id", keyId) }
+        }
+    }
 
     private suspend inline fun <reified T> postMultipart(
         path: String,

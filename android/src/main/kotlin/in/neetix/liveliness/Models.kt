@@ -12,6 +12,43 @@ data class ApiWarning(
     val description: String,
 )
 
+/**
+ * Optional device-attestation evidence for `/v1/face/face-match`,
+ * `/v1/liveness` and `/v1/age`. Sent as multipart fields `attest_platform`,
+ * `attest_token` (+ `attest_key_id`, iOS only); omit it entirely to keep
+ * current behavior. Pair with the request's `capture_nonce` — the token must
+ * be bound to it (Android: Play Integrity nonce = base64url(SHA-256(nonce)),
+ * see the capture module's `NeetixAttestation`; iOS: App Attest challenge).
+ */
+data class Attestation(
+    val platform: String, // "android" | "ios"
+    /** Base64 attestation token (Play Integrity token / App Attest CBOR). */
+    val token: String,
+    /** App Attest key id — iOS only. */
+    val keyId: String? = null,
+) {
+    companion object {
+        /** Play Integrity token from the capture module's `NeetixAttestation`. */
+        fun android(token: String) = Attestation("android", token)
+
+        /** Apple App Attest: base64 CBOR attestation object + key id. */
+        fun ios(token: String, keyId: String) = Attestation("ios", token, keyId)
+    }
+}
+
+/**
+ * Server-side attestation verdict echoed on face-match / liveness / age
+ * responses; null when no attestation evidence was sent. `verified == false`
+ * adds an `ATTESTATION_FAILED` warning (severity `review`; `decline` when the
+ * server has `[attestation].require` set).
+ */
+@Serializable
+data class AttestationInfo(
+    val platform: String = "",
+    val verified: Boolean = false,
+    val detail: String = "",
+)
+
 /** `POST /v1/signup` — [apiKey] is shown ONCE; persist it. */
 @Serializable
 data class SignupResponse(
@@ -29,6 +66,9 @@ data class LivenessResponse(
     @SerialName("liveness_score") val livenessScore: Double,
     @SerialName("liveness_status") val livenessStatus: String,
     @SerialName("face_count") val faceCount: Int = 0,
+    val warnings: List<ApiWarning> = emptyList(),
+    /** Only when attestation evidence was sent with the request. */
+    val attestation: AttestationInfo? = null,
 ) {
     val approved: Boolean get() = status == "Approved"
 }
@@ -45,6 +85,8 @@ data class AgeCheckResponse(
     @SerialName("is_adult") val isAdult: Boolean? = null,
     val verdict: String? = null,
     val warnings: List<ApiWarning> = emptyList(),
+    /** Only when attestation evidence was sent with the request. */
+    val attestation: AttestationInfo? = null,
 )
 
 @Serializable
@@ -76,6 +118,8 @@ data class FaceMatchResponse(
     val verdict: String, // "approved" | "review" | "declined"
     val warnings: List<ApiWarning> = emptyList(),
     val result: FaceMatchResult,
+    /** Only when attestation evidence was sent with the request. */
+    val attestation: AttestationInfo? = null,
 ) {
     val approved: Boolean get() = verdict == "approved"
 }

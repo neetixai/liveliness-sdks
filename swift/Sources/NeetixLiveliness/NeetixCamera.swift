@@ -5,12 +5,14 @@ import AVFoundation
 import UIKit
 
 /// A minimal front-camera capture session that yields JPEG `Data` for upload.
+/// Prefer `NeetixCaptureView` (SwiftUI, guided capture) for new integrations;
+/// this stays for UIKit apps that want a bare preview layer.
 ///
 /// Usage:
 ///   let cam = try NeetixCamera()
 ///   view.layer.addSublayer(cam.previewLayer)
 ///   let jpeg = try await cam.capture()
-///   let result = try await client.liveness(selfie: .jpeg(jpeg))
+///   let result = try await client.liveness(person: .jpeg(jpeg))
 public final class NeetixCamera: NSObject {
     private let session = AVCaptureSession()
     private let output = AVCapturePhotoOutput()

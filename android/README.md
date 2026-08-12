@@ -1,28 +1,41 @@
 # Neetix Liveliness — Android SDK (Kotlin)
 
 Kotlin client (OkHttp + kotlinx-serialization, coroutines) for the
-[Neetix Liveliness API](https://liveliness.neetix.in). Capture JPEG bytes
-with CameraX and pass them to the suspend functions.
+[Neetix Liveliness API](https://liveliness.neetix.in), plus an **optional
+CAPTURE module** (`capture/`) with a guided CameraX capture view and a Play
+Integrity attestation hook.
 
-Status: **beta (JVM-compiled + live-verified), JVM-compiled (kotlinc 2.1/JDK 21; 0 errors) and runtime-verified against production — Android-instrumented tests still pending**. Honest disclosure: this module has NOT
-been compiled or tested in this repo — the repo's CI has no JDK/Android
-toolchain (see `.github/workflows/ci.yml`). The code is idiomatic Kotlin
-mirroring the verified Swift/TypeScript clients, written against AGP 8.x /
-Kotlin 1.9+ / OkHttp 4.12 / kotlinx-serialization 1.6. Expect to build it
-inside your own app project; please report compile issues.
+Status, honestly:
+
+- **Client (`src/main/kotlin`) — beta, JVM-verified.** Pure JVM code (no
+  Android imports); `jvm-check/` compiles it as Kotlin/JVM in CI
+  (`gradle compileKotlin`, JDK 21 — see `.github/workflows/ci.yml`), and it
+  has been runtime-verified against production. Android-instrumented tests
+  are still pending.
+- **Capture module (`capture/`) — written, NOT compiled in this repo.** It is
+  real Android code (CameraX, Play Integrity) and requires the Android SDK +
+  AGP to build; this repo's CI has no Android toolchain, so it ships
+  write-only. It is deliberately excluded from `jvm-check` so the client's
+  JVM verification stays green. Build it inside your app project and report
+  issues.
 
 ## Install (source drop-in, for now)
 
 There is no Maven artifact yet. Either:
 
 1. Copy `src/main/kotlin/in/neetix/liveliness/` into your app module and add
-   the three dependencies from `build.gradle.kts`, or
-2. Add this directory as an included Gradle module:
+   the three dependencies from `build.gradle.kts` (plus, optionally,
+   `capture/src/main/kotlin/` with the CameraX/Integrity deps from
+   `capture/build.gradle.kts`), or
+2. Add the directories as included Gradle modules:
 
 ```kotlin
 // settings.gradle.kts (your app)
 include(":neetix-liveliness")
 project(":neetix-liveliness").projectDir = file("path/to/liveliness-sdks/android")
+// optional camera capture + attestation module:
+include(":neetix-liveliness-capture")
+project(":neetix-liveliness-capture").projectDir = file("path/to/liveliness-sdks/android/capture")
 ```
 
 Make sure your project applies the kotlinx-serialization plugin classpath
@@ -63,6 +76,70 @@ if (res.approved) proceed() else review(res.verdict, res.warnings)
 
 Streaming V-CIP (`WS /v1/stream/{id}`) is not wrapped yet — use OkHttp's
 `WebSocket` against the stream URL, sending JPEG frames as binary messages.
+
+## Capture module (`capture/`, Android-only, optional)
+
+`NeetixCaptureView` (package `in.neetix.liveliness.capture`) is a plain
+Android `View` — usable from Compose via `AndroidView { ... }` — that gives
+you a production-grade guided capture flow:
+
+- CameraX preview with an **oval guide** (selfie, front camera) or **ID-1
+  card guide** (document, back camera) — `Mode.SELFIE` / `Mode.DOCUMENT`
+- luma-based **brightness hints** (`TOO_DARK` / `TOO_BRIGHT`) and frame-diff
+  **stability hints** (`HOLD_STILL` / `STABLE`) from a 16×16 Y-plane grid
+- **auto-capture** after 1.5 s of continuous stability, with an on-overlay
+  countdown (default 3 s; cancelled if the scene moves) — plus a manual
+  `capture()` fallback
+- output JPEG rotated upright and downscaled to **<= 1280 px, quality 80**
+- a fresh `captureNonce` per `start()`/`rearm()` for the API's
+  `capture_nonce` field and attestation binding
+
+```kotlin
+val cam = NeetixCaptureView(context).apply {
+    mode = NeetixCaptureView.Mode.SELFIE
+    listener = object : NeetixCaptureView.Listener {
+        override fun onHint(hint: NeetixCaptureView.Hint) { /* show copy */ }
+        override fun onCaptured(jpeg: ByteArray) {
+            scope.launch {
+                val res = nx.liveness(jpeg, captureNonce = captureNonce)
+            }
+        }
+    }
+}
+container.addView(cam)
+cam.start(lifecycleOwner) // caller must hold android.permission.CAMERA
+```
+
+The host app is responsible for requesting the `CAMERA` runtime permission
+before `start()`.
+
+## Device attestation (optional)
+
+`/v1/face/face-match`, `/v1/liveness` and `/v1/age` accept optional
+multipart fields `attest_platform` (`"android"`/`"ios"`), `attest_token`
+(base64) and `attest_key_id` (iOS only), bound to the request's
+`capture_nonce`. Omitting them keeps current behavior. When sent, the
+response gains `attestation: {platform, verified, detail}` (typed as
+`AttestationInfo`); `verified == false` adds an `ATTESTATION_FAILED` warning
+(severity `review`; `decline` when the server has `[attestation].require`).
+
+On Android the capture module's `NeetixAttestation` wraps the standard Play
+Integrity API (classic request, nonce = `base64url(SHA-256(capture_nonce))`):
+
+```kotlin
+val attestor = NeetixAttestation(context) // cloudProjectNumber for non-Play distribution
+val token = attestor.requestToken(cam.captureNonce)
+val res = nx.faceMatch(
+    selfieJpeg, cardJpeg,
+    captureNonce = cam.captureNonce,
+    attestation = Attestation.android(token),
+)
+res.attestation?.let { if (!it.verified) review(it.detail) }
+```
+
+No Play services (or Integrity error)? Just send nothing — attestation
+params are optional, and the server only hard-requires them when configured
+with `[attestation].require`.
 
 ## Errors
 

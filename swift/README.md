@@ -2,11 +2,15 @@
 
 URLSession async/await client for the
 [Neetix Liveliness API](https://liveliness.neetix.in). Pure Foundation
-networking — builds on iOS 14+, macOS 12+, and Linux; the camera helper
-(`NeetixCamera`, AVFoundation) is iOS-only and compile-gated.
+networking — builds on iOS 14+, macOS 12+, and Linux. The capture UI
+(`NeetixCaptureView`, SwiftUI + AVFoundation, iOS 15+) and the low-level
+camera helper (`NeetixCamera`) are iOS-only and compile-gated; App Attest
+(`NeetixAttestation`) degrades to `NeetixError.unsupported` off-device.
 
 Status: **beta** — the library compiles via `swift build`; unit tests run
-under Xcode/CI (XCTest is absent from bare Swift toolchains).
+under Xcode/CI (XCTest is absent from bare Swift toolchains). The capture
+UI is tested via its API surface only — run the example on a real device
+before shipping (camera + App Attest don't exist on simulators/macOS).
 
 ## Install (Swift Package Manager)
 
@@ -41,7 +45,38 @@ let res = try await nx.faceMatch(person: .jpeg(selfie), card: .jpeg(card), clien
 print(res.verdict, res.result.isSameFace, res.warnings.map(\.code))
 ```
 
-On-device capture:
+## Guided capture (SwiftUI, iOS 15+)
+
+`NeetixCaptureView` is a full-screen guided capture flow: AVFoundation
+preview, an oval face guide (`.selfie`, front camera) or ID-1 card guide
+(`.document`, back camera), live quality hints (brightness + motion
+stability sampled from the video stream), auto-capture after 1.5 s of
+stable good frames with a countdown ring, a manual shutter fallback, and a
+retake/confirm step. Output is normalized JPEG (longest side ≤ 1280 px,
+quality 0.8) — ready to upload as-is.
+
+```swift
+import SwiftUI
+import NeetixLiveliness
+
+struct SelfieKycScreen: View {
+    let nx = NeetixClient(apiKey: "YOUR_KEY")
+
+    var body: some View {
+        NeetixCaptureView(mode: .selfie) { jpeg in       // .document for IDs
+            Task {
+                let res = try await nx.liveness(person: .jpeg(jpeg))
+                print(res.status, res.livenessScore)
+            }
+        } onCancel: { /* dismiss */ }
+    }
+}
+```
+
+Add `NSCameraUsageDescription` to your Info.plist. Pass
+`autoCapture: false` to disable the 1.5 s auto-shutter (the button still
+works). UIKit apps that only want a preview layer can keep using the
+low-level `NeetixCamera`:
 
 ```swift
 let cam = try NeetixCamera()                  // iOS only
@@ -50,14 +85,55 @@ let jpeg = try await cam.capture()
 let live = try await nx.liveness(person: .jpeg(jpeg))
 ```
 
+## App Attest (device attestation)
+
+`NeetixAttestation` wraps `DCAppAttestService`. Attach its payload to
+`faceMatch` / `liveness` / `ageCheck` and the server verifies it fully
+offline (x5c chain to the Apple App Attest root CA + nonce check against
+your `capture_nonce`), returning an `attestation` block on the response:
+
+```swift
+let jpeg: Data = ...                          // from NeetixCaptureView
+let nonce = NeetixAttestation.makeNonce()     // the attestation challenge
+let att = NeetixAttestation.isSupported
+    ? try await NeetixAttestation.attest(captureNonce: nonce)  // fresh key + attest
+    : nil                                     // simulator/macOS: send unattested
+
+let res = try await nx.faceMatch(
+    person: .jpeg(jpeg), card: .jpeg(card),
+    captureNonce: nonce, attestation: att)
+
+if let a = res.attestation, !a.verified {
+    // server adds an ATTESTATION_FAILED warning (severity "review";
+    // declines when the server runs with [attestation].require)
+    print("attestation failed:", a.detail ?? "")
+}
+```
+
+Wire contract (multipart fields, all optional — omitting them keeps
+today's behavior): `attest_platform` = `"ios"`, `attest_token` = base64
+CBOR attestation object, `attest_key_id` = App Attest key id,
+`capture_nonce` = the challenge string (the leaf-cert nonce must equal
+`SHA256(authData || SHA256(capture_nonce))`, which is what
+`NeetixAttestation.attestKey` produces by passing `SHA256(nonce)` as the
+`clientDataHash`). Responses gain
+`attestation: {platform, verified, detail} | null`.
+
+Requirements: real device (simulators throw `NeetixError.unsupported`),
+the App Attest capability/entitlement
+(`com.apple.developer.devicecheck.appattest-environment`), and an app
+distributed with your team's provisioning. Attestation objects are
+single-use per key, so `attest(captureNonce:)` generates a fresh key per
+capture.
+
 ## Methods
 
 | Method | Endpoint | Credits | Returns |
 |---|---|---|---|
 | `signup(email:)` | `POST /v1/signup` | free (grants 500) | `SignupResponse` — `apiKey` shown once |
-| `faceMatch(person:card:…)` | `POST /v1/face/face-match` | 2 | `FaceMatchResponse` (`verdict`, `warnings`, typed `result`) |
-| `liveness(person:)` | `POST /v1/liveness` | 1 | `LivenessResponse` |
-| `ageCheck(person:)` | `POST /v1/age` | 1 | `AgeCheckResponse` (new endpoint; 404 on older deployments) |
+| `faceMatch(person:card:…)` | `POST /v1/face/face-match` | 2 | `FaceMatchResponse` (`verdict`, `warnings`, typed `result`; optional `captureNonce`/`attestation` params) |
+| `liveness(person:…)` | `POST /v1/liveness` | 1 | `LivenessResponse` (optional `captureNonce`/`attestation` params) |
+| `ageCheck(person:…)` | `POST /v1/age` | 1 | `AgeCheckResponse` (new endpoint; 404 on older deployments; optional `captureNonce`/`attestation` params) |
 | `sessionStart()` | `POST /v1/session/start` | 1 | `SessionStartResponse` |
 | `sessionVerify(sessionId:frames:)` | `POST /v1/session/{id}/verify` | 1 | `SessionVerifyResponse` |
 | `authEnroll(userId:person:)` | `POST /v1/auth/enroll` | 1 | `EnrollResponse` |
@@ -81,3 +157,5 @@ Non-2xx responses throw
 stable machine code (`unauthorized`, `no_face_detected`,
 `insufficient_credits`, …). `err.isInsufficientCredits` flags an exhausted
 prepaid balance (HTTP 402): call `topup` and open `checkoutUrl`.
+`NeetixError.unsupported` means the feature can't run on this target
+(App Attest on the simulator/macOS/Linux) — proceed without attestation.

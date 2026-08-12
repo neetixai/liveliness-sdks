@@ -1,9 +1,10 @@
-// Android library module for the Neetix Liveliness SDK.
+// Android library module for the Neetix Liveliness SDK (API client).
 //
-// PRE-RELEASE / UNCOMPILED: this module has not been compiled in this repo's
-// CI (no JDK/Android toolchain there — see .github/workflows/ci.yml). It is
-// idiomatic Kotlin targeting a standard AGP 8.x / Kotlin 1.9+ toolchain;
-// build it inside your app project and report issues.
+// The sources are pure JVM (no Android imports) and are compile-verified as
+// Kotlin/JVM by jvm-check/ in CI. This AGP module itself is NOT built in CI
+// (no Android SDK there — see .github/workflows/ci.yml); build it inside
+// your app project. The optional camera/attestation code lives in the
+// separate capture/ module, which requires the Android SDK.
 
 plugins {
     id("com.android.library")

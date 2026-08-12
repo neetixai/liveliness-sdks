@@ -115,6 +115,55 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(res.warnings.first?.code, "BARCODE_UNREADABLE")
     }
 
+    func testLivenessWithAttestationDecodes() throws {
+        let json = """
+        {
+          "status": "Approved", "liveness_score": 0.97, "liveness_status": "live",
+          "face_count": 1,
+          "attestation": {"platform": "ios", "verified": true,
+                          "detail": "app attest chain + nonce ok"}
+        }
+        """.data(using: .utf8)!
+        let res = try JSONDecoder().decode(LivenessResponse.self, from: json)
+        XCTAssertTrue(res.approved)
+        XCTAssertEqual(res.attestation?.platform, "ios")
+        XCTAssertEqual(res.attestation?.verified, true)
+    }
+
+    func testFaceMatchNullAttestationDecodes() throws {
+        let json = """
+        {
+          "status": "success", "verdict": "approved", "warnings": [],
+          "attestation": null,
+          "result": {
+            "is_same_face": true, "same_face_confidence": 0.99,
+            "liveness_score": 0.95, "liveness_status": "live",
+            "spoof_detected": false
+          }
+        }
+        """.data(using: .utf8)!
+        let res = try JSONDecoder().decode(FaceMatchResponse.self, from: json)
+        XCTAssertNil(res.attestation)
+        XCTAssertTrue(res.approved)
+    }
+
+    func testAttestedFieldsMapping() {
+        let client = NeetixClient(apiKey: "k")
+        let payload = NeetixAttestationPayload(
+            keyId: "key-1", attestationObjectBase64: "b64token")
+        let fields = client.attestedFields(
+            ["client_ref_id": "r1"], captureNonce: "nonce-abc", attestation: payload)
+        XCTAssertEqual(fields["attest_platform"], "ios")
+        XCTAssertEqual(fields["attest_token"], "b64token")
+        XCTAssertEqual(fields["attest_key_id"], "key-1")
+        XCTAssertEqual(fields["capture_nonce"], "nonce-abc")
+        XCTAssertEqual(fields["client_ref_id"], "r1")
+
+        // No attestation => no attest_* keys (current server behavior).
+        let bare = client.attestedFields([:], captureNonce: nil, attestation: nil)
+        XCTAssertTrue(bare.isEmpty)
+    }
+
     func testBalanceDecodes() throws {
         let json = """
         {"status": "success", "client_id": "cl_abc", "balance": 498, "metered": true}
