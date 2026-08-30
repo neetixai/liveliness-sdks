@@ -1,31 +1,25 @@
 /**
  * @neetix/liveliness-react-native
  *
- * React Native wrapper around the Neetix Liveliness API. The transport client
- * is shared with the web SDK (`@neetix/liveliness` — framework-agnostic:
- * accepts `{ uri }` file parts and RN's fetch), so the full method surface
- * (signup, faceMatch, liveness, ageCheck, amlScreen, mrzParse, balance,
- * ledger, sessions, streaming, billing) is available on `client`.
+ * React Native wrapper around the Neetix Liveliness API. The API client is
+ * shared with the web SDK (`@neetix/liveliness-web`, framework-agnostic —
+ * accepts `{ uri }` file parts and RN's fetch). This package adds RN-specific
+ * ergonomics: a hook and camera-agnostic capture helpers.
  *
- * This package adds RN ergonomics: `fileFrom(uri)` and a `useLiveliness`
- * hook with loading/error state for the common camera flows. Camera capture
- * is BYO (react-native-vision-camera or expo-camera) — pass the captured
- * file `uri`.
+ * Peer deps: react, react-native. Camera capture is BYO (react-native-vision-
+ * camera or expo-camera) — pass the captured file `uri` to the client.
  */
 import { useCallback, useMemo, useState } from "react";
 import {
   NeetixClient,
   type ClientOptions,
   type ImageInput,
-  type AgeCheckResponse,
-  type AuthVerifyResponse,
-  type DocumentIdResponse,
   type FaceMatchResponse,
-  type FaceMatchOptions,
   type LivenessResponse,
-} from "@neetix/liveliness";
+  type AuthVerifyResponse,
+} from "@neetix/liveliness-web";
 
-export * from "@neetix/liveliness";
+export * from "@neetix/liveliness-web";
 
 /** An RN image file part from a camera/library uri. */
 export function fileFrom(uri: string, type = "image/jpeg"): ImageInput {
@@ -33,31 +27,23 @@ export function fileFrom(uri: string, type = "image/jpeg"): ImageInput {
 }
 
 export interface UseLiveliness {
-  /** Full API client — every SDK method lives here. */
   client: NeetixClient;
   loading: boolean;
   error?: Error;
   liveness: (selfieUri: string) => Promise<LivenessResponse>;
-  ageCheck: (selfieUri: string) => Promise<AgeCheckResponse>;
   faceMatch: (
     selfieUri: string,
     cardUri: string,
-    opts?: FaceMatchOptions,
+    fields?: Record<string, string>,
   ) => Promise<FaceMatchResponse>;
   authVerify: (userId: string, selfieUri: string) => Promise<AuthVerifyResponse>;
-  /** US/CA DL/state-ID parsing — pass the back (barcode) and/or front uri. */
-  documentId: (images: {
-    backUri?: string;
-    frontUri?: string;
-  }) => Promise<DocumentIdResponse>;
 }
 
 /**
  * Hook that wires a `NeetixClient` and tracks loading/error for the common
- * camera flows. Uses RN's global fetch.
+ * flows. Uses RN's global fetch.
  */
 export function useLiveliness(opts: ClientOptions): UseLiveliness {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const client = useMemo(() => new NeetixClient(opts), [opts.baseUrl, opts.apiKey]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | undefined>();
@@ -81,17 +67,9 @@ export function useLiveliness(opts: ClientOptions): UseLiveliness {
     loading,
     error,
     liveness: (uri) => run(() => client.liveness(fileFrom(uri))),
-    ageCheck: (uri) => run(() => client.ageCheck(fileFrom(uri))),
-    faceMatch: (selfieUri, cardUri, opts) =>
-      run(() => client.faceMatch(fileFrom(selfieUri), fileFrom(cardUri), opts)),
+    faceMatch: (selfieUri, cardUri, fields) =>
+      run(() => client.faceMatch(fileFrom(selfieUri), fileFrom(cardUri), fields)),
     authVerify: (userId, selfieUri) =>
       run(() => client.authVerify(userId, fileFrom(selfieUri))),
-    documentId: ({ backUri, frontUri }) =>
-      run(() =>
-        client.documentId({
-          back: backUri ? fileFrom(backUri) : undefined,
-          front: frontUri ? fileFrom(frontUri) : undefined,
-        }),
-      ),
   };
 }

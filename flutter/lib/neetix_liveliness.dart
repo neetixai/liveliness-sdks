@@ -1,8 +1,7 @@
-/// Neetix Liveliness API — Dart/Flutter SDK.
+/// Neetix Liveliness SDK for Dart/Flutter.
 ///
-/// Face match, passive liveliness, age check, AML screening, MRZ parsing,
-/// KYB validation, and prepaid-credit billing over
-/// https://liveliness.neetix.in.
+/// Pure-Dart API client; capture image bytes with your Flutter camera plugin
+/// (`camera` / `image_picker`) and pass them to the client.
 library neetix_liveliness;
 
 export 'src/client.dart';

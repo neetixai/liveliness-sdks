@@ -1,10 +1,17 @@
 name: neetix_liveliness
 description: >-
-  Dart/Flutter SDK for the Neetix Liveliness API — face match, liveliness,
-  age check, AML screening, MRZ parsing, KYB validation, and billing.
+  Neetix Liveliness API client for Dart and Flutter: face match, passive and
+  active liveliness (PAD), biometric authentication and passport/ID MRZ
+  parsing.
 version: 0.1.0
-homepage: https://liveliness.neetix.in
+homepage: https://neetix.in
 repository: https://github.com/neetixai/liveliness-sdks
+issue_tracker: https://github.com/neetixai/liveliness-sdks/issues
+topics:
+  - kyc
+  - liveness
+  - face-match
+  - biometrics
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -13,5 +20,5 @@ dependencies:
   http: ^1.2.0
 
 dev_dependencies:
-  lints: ^4.0.0
-  test: ^1.25.0
+  lints: ^3.0.0
+  test: ^1.24.0

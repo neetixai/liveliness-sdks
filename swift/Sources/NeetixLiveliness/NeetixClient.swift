@@ -3,24 +3,11 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// Errors surfaced by the client. `.api` carries the HTTP status plus the
-/// stable machine-readable `messageCode` from the server's error envelope
-/// (e.g. `unauthorized`, `no_face_detected`, `insufficient_credits`).
+/// Errors surfaced by the client.
 public enum NeetixError: Error {
-    case api(status: Int, messageCode: String?, message: String, body: Data)
+    case badResponse(status: Int, body: String)
     case decoding(String)
     case transport(Error)
-    /// The feature isn't available on this platform/device (e.g. App Attest
-    /// on the simulator, macOS, or Linux).
-    case unsupported(String)
-
-    /// True when the prepaid balance is exhausted (HTTP 402).
-    public var isInsufficientCredits: Bool {
-        if case let .api(status, code, _, _) = self {
-            return status == 402 || code == "insufficient_credits"
-        }
-        return false
-    }
 }
 
 /// A face image to upload: either raw JPEG data or a file URL.
@@ -36,230 +23,64 @@ public enum ImageInput {
     }
 }
 
-/// Neetix Liveliness API client (async/await, URLSession). Pure Foundation
-/// networking — no UIKit — so it builds and unit-tests on macOS/Linux; the
-/// camera capture layer (`NeetixCamera`) is iOS-only and gated behind
-/// `#if canImport(UIKit)`.
-///
-/// Every billable call deducts prepaid credits (face-match 2, stream 5,
-/// KYB 2, document-id 2, others 1). An exhausted balance throws
-/// `NeetixError.api(status: 402, messageCode: "insufficient_credits", …)`.
+/// Neetix Liveliness API client. Pure Foundation networking — no UIKit, so it
+/// builds and unit-tests on macOS/Linux; the camera capture layer
+/// (`NeetixCamera`) is iOS-only and gated behind `#if canImport(UIKit)`.
 public final class NeetixClient {
-    public static let defaultBaseURL = "https://liveliness.neetix.in"
-
     private let baseURL: URL
     private let apiKey: String?
     private let session: URLSession
 
-    public init(
-        baseURL: String = NeetixClient.defaultBaseURL,
-        apiKey: String? = nil,
-        session: URLSession = .shared
-    ) {
+    public init(baseURL: String, apiKey: String? = nil, session: URLSession = .shared) {
         self.baseURL = URL(string: baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL)!
         self.apiKey = apiKey
         self.session = session
     }
 
-    // MARK: - Account
+    // MARK: - Public API
 
-    /// Self-serve trial signup — no auth needed. Grants 500 free credits.
-    /// The returned `apiKey` is shown ONCE; persist it.
-    public func signup(email: String) async throws -> SignupResponse {
-        try await postJSON("/v1/signup", body: ["email": email], authenticated: false)
+    /// Passive liveliness on a single selfie.
+    public func liveness(selfie: ImageInput) async throws -> LivenessResponse {
+        try await postMultipart("/v1/liveness", images: [("person", selfie)])
     }
 
-    // MARK: - Face & liveliness
-
-    /// Passive liveliness on a single selfie. Cost: 1 credit.
-    ///
-    /// Optionally attach an App Attest proof (`NeetixAttestation.attest`)
-    /// plus the `captureNonce` used as its challenge — the response then
-    /// carries an `attestation` verification block.
-    public func liveness(
-        person: ImageInput,
-        captureNonce: String? = nil,
-        attestation: NeetixAttestationPayload? = nil
-    ) async throws -> LivenessResponse {
-        try await postMultipart(
-            "/v1/liveness",
-            images: [("person", person)],
-            fields: attestedFields([:], captureNonce: captureNonce, attestation: attestation)
-        )
-    }
-
-    /// Face match + liveliness (selfie vs ID/reference). Cost: 2 credits.
-    /// Inspect `verdict` (`approved | review | declined`) and `warnings`.
-    ///
-    /// Optionally attach an App Attest proof (`NeetixAttestation.attest`)
-    /// plus the `captureNonce` used as its challenge — the response then
-    /// carries an `attestation` verification block; a failed verification
-    /// adds an `ATTESTATION_FAILED` warning.
+    /// Face match + liveliness.
     public func faceMatch(
-        person: ImageInput,
-        card: ImageInput,
-        clientRefId: String? = nil,
-        customerId: String? = nil,
-        captureNonce: String? = nil,
-        attestation: NeetixAttestationPayload? = nil,
-        extraFields: [String: String] = [:]
+        selfie: ImageInput, card: ImageInput, fields: [String: String] = [:]
     ) async throws -> FaceMatchResponse {
-        var fields = extraFields
-        if let clientRefId { fields["client_ref_id"] = clientRefId }
-        if let customerId { fields["customer_id"] = customerId }
-        return try await postMultipart(
-            "/v1/face/face-match",
-            images: [("person", person), ("card", card)],
-            fields: attestedFields(fields, captureNonce: captureNonce, attestation: attestation)
-        )
-    }
-
-    /// Selfie age estimation. Cost: 1 credit.
-    /// New endpoint — older deployments return 404 (`messageCode: "not_found"`).
-    /// Supports the same optional attestation params as `faceMatch`.
-    public func ageCheck(
-        person: ImageInput,
-        captureNonce: String? = nil,
-        attestation: NeetixAttestationPayload? = nil
-    ) async throws -> AgeCheckResponse {
         try await postMultipart(
-            "/v1/age",
-            images: [("person", person)],
-            fields: attestedFields([:], captureNonce: captureNonce, attestation: attestation)
+            "/v1/face/face-match",
+            images: [("person", selfie), ("card", card)],
+            fields: fields
         )
     }
-
-    // MARK: - Active-challenge liveliness
-
-    /// Start an active-challenge liveliness session.
-    public func sessionStart() async throws -> SessionStartResponse {
-        try await postMultipart("/v1/session/start", images: [])
-    }
-
-    /// Submit the ordered challenge frames (`frame_0, frame_1, …`).
-    public func sessionVerify(
-        sessionId: String, frames: [ImageInput]
-    ) async throws -> SessionVerifyResponse {
-        let images = frames.enumerated().map { ("frame_\($0.offset)", $0.element) }
-        return try await postMultipart("/v1/session/\(sessionId)/verify", images: images)
-    }
-
-    // MARK: - Biometric auth
 
     /// Enroll a user's face for biometric authentication.
     @discardableResult
-    public func authEnroll(userId: String, person: ImageInput) async throws -> EnrollResponse {
+    public func authEnroll(userId: String, selfie: ImageInput) async throws -> EnrollResponse {
         try await postMultipart(
-            "/v1/auth/enroll", images: [("person", person)], fields: ["user_id": userId]
+            "/v1/auth/enroll", images: [("person", selfie)], fields: ["user_id": userId]
         )
     }
 
     /// Authenticate a returning user by face + liveliness.
-    public func authVerify(userId: String, person: ImageInput) async throws -> AuthVerifyResponse {
+    public func authVerify(userId: String, selfie: ImageInput) async throws -> AuthVerifyResponse {
         try await postMultipart(
-            "/v1/auth/verify", images: [("person", person)], fields: ["user_id": userId]
+            "/v1/auth/verify", images: [("person", selfie)], fields: ["user_id": userId]
         )
     }
 
-    // MARK: - Screening & documents
-
-    /// AML / sanctions & PEP screening by name (+ optional DOB "YYYY-MM-DD").
-    /// Cost: 1 credit.
-    public func amlScreen(
-        name: String, dob: String? = nil, threshold: Double? = nil
-    ) async throws -> AmlScreenResponse {
-        var body: [String: Any] = ["name": name]
-        if let dob { body["dob"] = dob }
-        if let threshold { body["threshold"] = threshold }
-        return try await postJSON("/v1/aml/screen", body: body)
-    }
-
-    /// KYB: validate Indian business identifiers (GSTIN / PAN / CIN) —
-    /// only the identifiers you send come back. Cost: 2 credits.
-    public func kybValidate(
-        gstin: String? = nil, pan: String? = nil, cin: String? = nil
-    ) async throws -> KybValidateResponse {
-        var body: [String: Any] = [:]
-        if let gstin { body["gstin"] = gstin }
-        if let pan { body["pan"] = pan }
-        if let cin { body["cin"] = cin }
-        return try await postJSON("/v1/kyb/validate", body: body)
-    }
-
-    /// Parse + checksum-validate a passport/ID MRZ (2 or 3 lines). Cost: 1 credit.
-    public func mrzParse(_ mrz: String) async throws -> MrzResponse {
+    /// Parse + validate a passport/ID MRZ.
+    public func parseMRZ(_ mrz: String) async throws -> MRZResponse {
         try await postJSON("/v1/document/mrz", body: ["mrz": mrz])
-    }
-
-    /// US/CA driver's-license / state-ID parsing. `back` (the side with the
-    /// PDF417 barcode) is decoded and AAMVA-parsed into `aamva` + `checks`;
-    /// `front` (portrait side) runs face detection (`faceFound`) + document
-    /// forensics. Send at least one image (400 otherwise). A back image with
-    /// no readable barcode is NOT an error: you get a 200 with
-    /// `checks.barcodeDecoded == false` and a `BARCODE_UNREADABLE` warning.
-    /// Cost: 2 credits.
-    public func documentId(
-        back: ImageInput? = nil, front: ImageInput? = nil
-    ) async throws -> DocumentIdResponse {
-        var images: [(String, ImageInput)] = []
-        if let back { images.append(("back", back)) }
-        if let front { images.append(("front", front)) }
-        return try await postMultipart("/v1/document/id", images: images)
-    }
-
-    // MARK: - Billing (prepaid credits)
-
-    /// Current prepaid-credit balance.
-    public func balance() async throws -> BalanceResponse {
-        try await getJSON("/v1/billing/balance")
-    }
-
-    /// Credit ledger, newest first.
-    public func ledger(limit: Int = 50) async throws -> LedgerResponse {
-        try await getJSON("/v1/billing/ledger?limit=\(limit)")
-    }
-
-    /// Purchasable credit packs.
-    public func packs() async throws -> PacksResponse {
-        try await getJSON("/v1/billing/packs")
-    }
-
-    /// Create a hosted-checkout top-up; open `checkoutUrl` from the result.
-    public func topup(pack: String, email: String? = nil) async throws -> TopupResponse {
-        var body: [String: Any] = ["pack": pack]
-        if let email { body["email"] = email }
-        return try await postJSON("/v1/billing/topup", body: body)
     }
 
     // MARK: - Transport
 
-    /// Merge optional capture-nonce + device-attestation multipart fields
-    /// into `base` per the server contract: `attest_platform`,
-    /// `attest_token`, `attest_key_id` (iOS only) and `capture_nonce`.
-    /// Absent fields keep current server behavior. Internal for tests.
-    func attestedFields(
-        _ base: [String: String],
-        captureNonce: String?,
-        attestation: NeetixAttestationPayload?
-    ) -> [String: String] {
-        var fields = base
-        if let captureNonce { fields["capture_nonce"] = captureNonce }
-        if let attestation {
-            fields["attest_platform"] = attestation.platform
-            fields["attest_token"] = attestation.attestationObjectBase64
-            if !attestation.keyId.isEmpty {
-                fields["attest_key_id"] = attestation.keyId
-            }
-        }
-        return fields
-    }
-
-    private func request(_ path: String, method: String, authenticated: Bool = true) -> URLRequest {
-        var req = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
-        req.httpMethod = method
-        if authenticated, let apiKey {
-            req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
+    private func request(_ path: String) -> URLRequest {
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        req.httpMethod = "POST"
+        if let apiKey { req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
         return req
     }
 
@@ -269,7 +90,7 @@ public final class NeetixClient {
         fields: [String: String] = [:]
     ) async throws -> T {
         let boundary = "neetix.\(UUID().uuidString)"
-        var req = request(path, method: "POST")
+        var req = request(path)
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -292,17 +113,10 @@ public final class NeetixClient {
         return try await send(req)
     }
 
-    private func postJSON<T: Decodable>(
-        _ path: String, body: [String: Any], authenticated: Bool = true
-    ) async throws -> T {
-        var req = request(path, method: "POST", authenticated: authenticated)
+    private func postJSON<T: Decodable>(_ path: String, body: [String: String]) async throws -> T {
+        var req = request(path)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await send(req)
-    }
-
-    private func getJSON<T: Decodable>(_ path: String) async throws -> T {
-        let req = request(path, method: "GET")
         return try await send(req)
     }
 
@@ -315,17 +129,7 @@ public final class NeetixClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            var message = "HTTP \(status)"
-            var code: String? = nil
-            if let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                // Standard envelope carries `message` + `message_code`;
-                // face-match domain errors carry an `error` string instead.
-                message = envelope["message"] as? String
-                    ?? envelope["error"] as? String
-                    ?? message
-                code = envelope["message_code"] as? String
-            }
-            throw NeetixError.api(status: status, messageCode: code, message: message, body: data)
+            throw NeetixError.badResponse(status: status, body: String(data: data, encoding: .utf8) ?? "")
         }
         do {
             return try JSONDecoder().decode(T.self, from: data)

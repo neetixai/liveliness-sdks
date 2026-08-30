@@ -1,49 +1,64 @@
 {
-  "name": "@neetix/liveliness",
+  "name": "@neetix/liveliness-web",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Neetix Liveliness API — face match, passive/active/streaming liveliness, age check, AML screening, MRZ parsing, and prepaid-credit billing. Zero runtime dependencies (fetch-based).",
+  "description": "Neetix Liveliness API client + browser camera capture (face match, passive/active/continuous liveliness, biometric auth, MRZ, revocable templates).",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "liveness",
+    "liveliness",
+    "kyc",
+    "ekyc",
+    "face-match",
+    "face-recognition",
+    "biometric",
+    "biometric-authentication",
+    "anti-spoofing",
+    "mrz",
+    "vcip",
+    "selfie",
+    "neetix"
+  ],
   "license": "Apache-2.0",
-  "author": "Neetix",
-  "homepage": "https://liveliness.neetix.in",
+  "author": "Neetix (https://neetix.in)",
+  "homepage": "https://github.com/neetixai/liveliness-sdks/tree/main/web#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neetixai/liveliness-sdks.git",
     "directory": "web"
   },
-  "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+  "bugs": {
+    "url": "https://github.com/neetixai/liveliness-sdks/issues"
   },
-  "files": [
-    "dist",
-    "src",
-    "README.md"
-  ],
-  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepare": "npm run build"
-  },
   "devDependencies": {
-    "typescript": "^5.5.0"
-  },
-  "keywords": [
-    "kyc",
-    "liveness",
-    "face-match",
-    "biometrics",
-    "aml",
-    "mrz",
-    "neetix"
-  ]
+    "typescript": "^5.4.0"
+  }
 }

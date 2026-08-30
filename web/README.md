@@ -1,97 +1,69 @@
-# @neetix/liveliness — Web / Node TypeScript SDK
+# @neetix/liveliness-web
 
-Zero-dependency, fetch-based client for the [Neetix Liveliness API](https://liveliness.neetix.in).
-Works in the browser, Node >= 18, and (via `{ uri }` file parts) React Native.
-
-Status: **beta**.
-
-## Install
-
-From GitHub (until the npm publish lands):
+TypeScript client + browser camera capture for the Neetix Liveliness API:
+face match, passive/active/continuous liveliness, biometric auth, MRZ parsing
+and revocable templates. Framework-agnostic, zero runtime dependencies.
 
 ```bash
-# pnpm supports git-subdirectory installs directly:
-pnpm add "github:neetixai/liveliness-sdks#main&path:/web"
-
-# npm cannot install a git subdirectory — use gitpkg…
-npm i "https://gitpkg.vercel.app/neetixai/liveliness-sdks/web?main"
-
-# …or a plain clone:
-git clone https://github.com/neetixai/liveliness-sdks
-npm i ./liveliness-sdks/web
+npm install @neetix/liveliness-web
 ```
 
-The package is publish-ready; once on npm it's just `npm i @neetix/liveliness`.
-`dist/` is not committed — the `prepare` script compiles it on install.
-
-## Quickstart (10 lines)
+## Quick start
 
 ```ts
-import { NeetixClient } from "@neetix/liveliness";
+import { NeetixClient, openCamera } from "@neetix/liveliness-web";
 
-const nx = new NeetixClient({ apiKey: process.env.NEETIX_API_KEY });
-// No key yet? const { api_key } = await new NeetixClient().signup("you@co.com"); // 500 free credits
-
-const selfie = new Blob([await fs.promises.readFile("selfie.jpg")], { type: "image/jpeg" });
-const card = new Blob([await fs.promises.readFile("id.jpg")], { type: "image/jpeg" });
-
-const res = await nx.faceMatch(selfie, card, { clientRefId: "order-42" });
-console.log(res.verdict, res.result.is_same_face, res.warnings);
+const client = new NeetixClient({ baseUrl: "https://api.neetix.in", apiKey });
+const cam = await openCamera(document.querySelector("video")!);
+const res = await client.liveness(await cam.capture());
 ```
 
-## Methods
+## Guided capture (oval guide + auto-capture)
 
-| Method | Endpoint | Credits | Returns |
-|---|---|---|---|
-| `signup(email)` | `POST /v1/signup` | free (grants 500) | `SignupResponse` — `api_key` shown once |
-| `faceMatch(person, card, opts?)` | `POST /v1/face/face-match` | 2 | `FaceMatchResponse` — `verdict`, `warnings[]`, full `result` |
-| `liveness(person)` | `POST /v1/liveness` | 1 | `LivenessResponse` |
-| `ageCheck(person)` | `POST /v1/age` | 1 | `AgeCheckResponse` (new endpoint; 404 on older deployments) |
-| `sessionStart()` | `POST /v1/session/start` | 1 | `SessionStartResponse` — challenge list |
-| `sessionVerify(id, frames)` | `POST /v1/session/{id}/verify` | 1 | `SessionVerifyResponse` |
-| `streamStart()` / `streamUrl(id)` | `POST /v1/stream/start`, `WS /v1/stream/{id}` | 5 | `StreamStartResponse`; drive the socket with `StreamSession` |
-| `authEnroll(userId, person)` | `POST /v1/auth/enroll` | 1 | enrollment envelope |
-| `authVerify(userId, person)` | `POST /v1/auth/verify` | 1 | `AuthVerifyResponse` |
-| `amlScreen(name, dob?, threshold?)` | `POST /v1/aml/screen` | 1 | `AmlScreenResponse` — `hit`, `matches[]` |
-| `kybValidate({gstin, pan, cin})` | `POST /v1/kyb/validate` | 2 | `KybValidateResponse` |
-| `mrzParse(mrz)` | `POST /v1/document/mrz` | 1 | `MrzResponse` |
-| `documentId({back?, front?})` | `POST /v1/document/id` | 2 | `DocumentIdResponse` — PDF417→AAMVA parse (`aamva`, `checks`), front-side `face_found` + `forensics`; at least one image required |
-| `balance()` | `GET /v1/billing/balance` | — | `BalanceResponse` |
-| `ledger(limit?)` | `GET /v1/billing/ledger` | — | `LedgerResponse` |
-| `packs()` | `GET /v1/billing/packs` | — | `PacksResponse` |
-| `topup(pack, email?)` | `POST /v1/billing/topup` | — | `TopupResponse` — open `checkout_url` |
+`startGuidedCapture` adds a selfie-capture UX on top of the raw camera: an
+oval face-guide overlay, a live quality meter (brightness, sharpness,
+face-size heuristic) and auto-capture once quality holds for ~1s.
 
-## Errors
-
-Every non-2xx response throws `NeetixApiError`:
-
-```ts
-try {
-  await nx.liveness(selfie);
-} catch (e) {
-  if (e instanceof NeetixApiError) {
-    e.status;               // 402
-    e.messageCode;          // "insufficient_credits"
-    e.isInsufficientCredits // true — time to top up
-  }
-}
+```html
+<div style="position: relative">
+  <video style="width: 100%; transform: scaleX(-1)"></video>
+  <canvas style="position: absolute; inset: 0; width: 100%; height: 100%"></canvas>
+</div>
 ```
 
-## Streaming liveliness (V-CIP)
-
 ```ts
-import { StreamSession, openCamera } from "@neetix/liveliness";
+import { NeetixClient, startGuidedCapture } from "@neetix/liveliness-web";
 
-const { session_id } = await nx.streamStart();          // 5 credits
-const stream = new StreamSession(nx.streamUrl(session_id), {
-  onFrame: (f) => console.log("liveness", f.liveness, f.current_challenge),
-  onVerdict: (v) => console.log("verdict", v.verdict, v.reasons),
+const guide = await startGuidedCapture({
+  video: document.querySelector("video")!,
+  overlay: document.querySelector("canvas")!,
+  onQuality: (q) => meter.textContent =
+    `brightness ${q.brightness.toFixed(0)} · sharpness ${q.sharpness.toFixed(0)} · fill ${(q.faceSize * 100).toFixed(0)}%`,
 });
-await stream.ready();
-const cam = await openCamera(videoElement);             // browser getUserMedia
-setInterval(async () => stream.sendFrame(await cam.capture()), 300);
-// … then stream.end() to request the final verdict.
+
+const { blob, readings } = await guide.result; // auto-captured JPEG + readings
+guide.stop();
+
+const client = new NeetixClient({ baseUrl: "https://api.neetix.in", apiKey });
+const res = await client.liveness(blob);
 ```
 
-`openCamera` is browser-only (getUserMedia); the client itself has no DOM
-dependency and runs fine server-side.
+Thresholds, hold time, JPEG quality and camera constraints are configurable
+via `GuidedCaptureOptions`; `guide.captureNow()` bypasses the meter.
+
+## API surface
+
+- `liveness(selfie)` — passive PAD
+- `faceMatch(selfie, card, fields?)` — 1:1 match + liveliness + signals
+- `authEnroll(userId, selfie)` / `authVerify(userId, selfie)` — biometric login
+- `sessionStart()` / `sessionVerify(id, frames)` — active challenges
+- `streamStart()` + `StreamSession` — continuous V-CIP over WebSocket
+- `parseMrz(text)` — passport / ID MRZ
+- `templateProtect` / `templateVerify` — revocable templates
+
+See the [SDK overview](https://github.com/neetixai/liveliness-sdks) for the
+other platforms (React Native, iOS, Android, Flutter).
+
+## License
+
+Apache-2.0

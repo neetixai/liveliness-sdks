@@ -1,4 +1,4 @@
-import type { StreamFrameUpdate, StreamMessage, StreamVerdictMessage } from "./types.js";
+import type { StreamFrameUpdate, StreamMessage, StreamVerdictMessage } from "./types";
 
 export interface StreamCallbacks {
   onFrame?: (u: StreamFrameUpdate) => void;

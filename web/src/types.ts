@@ -1,10 +1,7 @@
-// Wire types for the Neetix Liveliness API (https://liveliness.neetix.in).
-// These mirror the server's response shapes; unknown/extra keys are preserved
-// where the shape is open-ended.
+// Wire types for the Neetix Liveliness API. Mirrors the server response shapes.
 
 export type Verdict = "approved" | "review" | "declined";
 
-/** One entry of the risk-policy `warnings[]` array. */
 export interface Warning {
   code: string;
   severity: "decline" | "review";
@@ -68,7 +65,6 @@ export interface FaceMatchResult {
   latency_ms: number;
 }
 
-/** `POST /v1/face/face-match` */
 export interface FaceMatchResponse {
   status: string;
   statusCode: number;
@@ -79,7 +75,6 @@ export interface FaceMatchResponse {
   result: FaceMatchResult;
 }
 
-/** `POST /v1/liveness` */
 export interface LivenessResponse {
   status: "Approved" | "Declined" | "Not Finished";
   liveness_score: number;
@@ -87,34 +82,6 @@ export interface LivenessResponse {
   liveness_evaluated: boolean;
   face_count: number;
   threshold: number;
-}
-
-/**
- * `POST /v1/age` — selfie age estimation (new endpoint; may return 404
- * `not_found` on deployments that predate it).
- */
-export interface AgeCheckResponse {
-  status: string;
-  /** e.g. "20-29"; "unknown" on the tract fallback backend. */
-  age_bracket: string;
-  /** Bracket midpoint estimate; null when unavailable. */
-  age_estimate: number | null;
-  face_count: number;
-  /** 0-100; null when liveness wasn't evaluated. */
-  liveness_score: number | null;
-  [key: string]: unknown;
-}
-
-/** `POST /v1/signup` — the api_key is shown ONCE; store it. */
-export interface SignupResponse {
-  status: string;
-  api_key: string;
-  client_id: string;
-  /** Legacy field kept for compatibility (superseded by `credits`). */
-  monthly_quota: number;
-  /** Free credits granted on signup (500). */
-  credits: number;
-  message: string;
 }
 
 export interface AuthVerifyResponse {
@@ -127,7 +94,6 @@ export interface AuthVerifyResponse {
   liveness_ok: boolean;
 }
 
-/** `POST /v1/session/start` */
 export interface SessionStartResponse {
   status: string;
   session_id: string;
@@ -136,15 +102,6 @@ export interface SessionStartResponse {
   instructions: string;
 }
 
-/** `POST /v1/session/{id}/verify` — verdict envelope. */
-export interface SessionVerifyResponse {
-  status: string;
-  verdict?: string;
-  warnings?: Warning[];
-  [key: string]: unknown;
-}
-
-/** `POST /v1/stream/start` */
 export interface StreamStartResponse {
   status: string;
   session_id: string;
@@ -181,66 +138,6 @@ export interface StreamVerdictMessage {
 
 export type StreamMessage = StreamFrameUpdate | StreamVerdictMessage;
 
-/** `POST /v1/aml/screen` */
-export interface AmlMatch {
-  matched_name: string;
-  score: number;
-  list: string;
-  country?: string | null;
-  program?: string | null;
-  dob_match?: boolean | null;
-}
-
-export interface AmlScreenResponse {
-  status: string;
-  query: string;
-  screened_against: number;
-  threshold: number;
-  hit: boolean;
-  matches: AmlMatch[];
-}
-
-/** `POST /v1/kyb/validate` — only the fields you sent come back. */
-export interface KybGstin {
-  input: string;
-  valid: boolean;
-  checksum_valid?: boolean;
-  state_code?: string | null;
-  state?: string | null;
-  pan?: string | null;
-  entity_number?: string | null;
-  expected_check_digit?: string | null;
-}
-
-export interface KybPan {
-  input: string;
-  valid: boolean;
-  entity_type_code?: string | null;
-  entity_type?: string | null;
-}
-
-export interface KybCin {
-  input: string;
-  valid: boolean;
-  listing_status?: string | null;
-  listing_code?: string | null;
-  industry_code?: string | null;
-  state_code?: string | null;
-  state?: string | null;
-  incorporation_year?: number | null;
-  company_class_code?: string | null;
-  company_class?: string | null;
-  registration_number?: string | null;
-}
-
-export interface KybValidateResponse {
-  status: string;
-  gstin?: KybGstin;
-  pan?: KybPan;
-  cin?: KybCin;
-}
-
-/** `POST /v1/document/mrz` */
 export interface MrzResponse {
   status: string;
   valid: boolean;
@@ -260,141 +157,11 @@ export interface MrzResponse {
   };
 }
 
-/** Address block inside `aamva` from `POST /v1/document/id`. */
-export interface AamvaAddress {
-  street: string | null;
-  city: string | null;
-  state: string | null;
-  postal: string | null;
-}
-
-/**
- * AAMVA payload decoded from the back-side PDF417 barcode of a US/CA
- * driver's license / state ID. Elements absent from the barcode are `null`.
- */
-export interface AamvaData {
-  /** AAMVA standard version (1–10). */
-  version: number;
-  /** Issuer Identification Number (IIN, 6 digits). */
-  issuer_id: string;
-  doc_type: "DL" | "ID";
-  first_name: string | null;
-  middle_name: string | null;
-  last_name: string | null;
-  /** "YYYY-MM-DD" */
-  dob: string | null;
-  /** "YYYY-MM-DD" */
-  expiry: string | null;
-  issue_date: string | null;
-  license_number: string | null;
-  address: AamvaAddress;
-  sex: string | null;
-  height: string | null;
-  eye_color: string | null;
-  country: "USA" | "CAN" | null;
-  real_id_compliant: boolean | null;
-  [key: string]: unknown;
-}
-
-/** Decision inputs derived from the barcode; null = not evaluable. */
-export interface DocumentIdChecks {
-  barcode_decoded: boolean;
-  aamva_parsed: boolean;
-  expired: boolean | null;
-  underage_18: boolean | null;
-  underage_21: boolean | null;
-  dates_valid: boolean | null;
-}
-
-/**
- * `POST /v1/document/id` — DL/state-ID parsing: back-side PDF417 → AAMVA,
- * optional front-side face detection + document forensics. Warning codes:
- * `DOCUMENT_EXPIRED`, `DOCUMENT_UNDERAGE_18`, `DOCUMENT_UNDERAGE_21`,
- * `BARCODE_UNREADABLE`, `DOCUMENT_SCREEN_REPLAY`, `DOCUMENT_TAMPER`.
- */
-export interface DocumentIdResponse {
-  status: string;
-  /** null when the barcode couldn't be decoded/parsed. */
-  aamva: AamvaData | null;
-  checks: DocumentIdChecks;
-  /** Only when a `front` image was sent; null otherwise. */
-  face_found: boolean | null;
-  /** Front-side screen-replay/tamper signals; null without a `front` image. */
-  forensics: Forensics | null;
-  warnings: Warning[];
-  [key: string]: unknown;
-}
-
-// ---------- Billing (prepaid credits) ----------
-
-/** `GET /v1/billing/balance` */
-export interface BalanceResponse {
-  status: string;
-  client_id: string;
-  balance: number;
-  /** false = postpaid/exempt account (calls don't deduct credits). */
-  metered: boolean;
-}
-
-export interface LedgerEntry {
-  delta: number;
-  balance_after: number;
-  reason: string;
-  ref_id: string | null;
-  created_at: string;
-}
-
-/** `GET /v1/billing/ledger` */
-export interface LedgerResponse {
-  status: string;
-  client_id: string;
-  balance: number;
-  entries: LedgerEntry[];
-}
-
-export interface PackInfo {
-  id: string;
-  credits: number;
-  display_price: string | null;
-}
-
-/** `GET /v1/billing/packs` */
-export interface PacksResponse {
-  status: string;
-  packs: PackInfo[];
-}
-
-/** `POST /v1/billing/topup` — redirect the customer to `checkout_url`. */
-export interface TopupResponse {
-  status: string;
-  pack: string;
-  credits: number;
-  checkout_url: string;
-  session_id: string;
-}
-
-/**
- * The API's error envelopes. Most endpoints return
- * `{ success, statusCode, message, message_code, error: {type, detail} }`;
- * face-match domain errors use the Digitap-compatible
- * `{ status: "fail", statusCode, error: "<string>", clientRefId, requestId }`.
- */
-export interface ApiErrorBody {
-  success?: boolean;
-  status?: string;
-  statusCode?: number;
-  message?: string;
-  message_code?: string;
-  error?: string | { type?: string; detail?: string };
-  clientRefId?: string;
-  requestId?: string;
-}
-
 export interface ClientOptions {
-  /** API base, defaults to https://liveliness.neetix.in (no trailing slash). */
-  baseUrl?: string;
-  /** Bearer API key (from `signup()` or the console). */
+  /** API base, e.g. https://api.neetix.in (no trailing slash). */
+  baseUrl: string;
+  /** Bearer API key. */
   apiKey?: string;
-  /** Override fetch (older Node, custom agents). Defaults to global fetch. */
+  /** Override fetch (Node/RN). Defaults to global fetch. */
   fetch?: typeof fetch;
 }
