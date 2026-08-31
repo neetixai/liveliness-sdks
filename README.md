@@ -1,5 +1,14 @@
 # Neetix Liveliness — Client SDKs
 
+Official client SDKs for **[Neetix Liveliness](https://liveliness.neetix.in)** —
+a pure-Rust identity-verification, face-liveness (presentation-attack detection)
+and video-KYC (V-CIP) API, built India-first and self-hostable.
+
+- **Website & product:** https://liveliness.neetix.in
+- **Developer guide / quick start:** https://liveliness.neetix.in/developers
+- **Full API reference (OpenAPI):** https://liveliness.neetix.in/api-reference
+- **Open benchmark (LFW View-2, reproducible):** https://liveliness.neetix.in/benchmarks/
+
 Publishing: see [PUBLISHING.md](./PUBLISHING.md) for per-registry commands,
 required accounts/tokens and version-bump conventions.
 
@@ -93,3 +102,24 @@ final res = await client.liveness(jpegBytes); // from the `camera` plugin
 val client = NeetixClient("https://api.neetix.in", apiKey)
 val res = client.liveness(jpegBytes) // suspend; jpegBytes from CameraX
 ```
+
+## About Neetix Liveliness
+
+Neetix Liveliness is an identity-verification and face-liveness API written in
+pure Rust: passive and active liveness / presentation-attack detection, 1:1 and
+1:N face matching, continuous liveness for video-KYC (V-CIP), document/MRZ
+reading, and revocable biometric templates. It runs as a single self-hostable
+binary and is India-first.
+
+We publish an **open, reproducible accuracy benchmark** (LFW View-2 protocol,
+harness + machine-readable results) rather than an unverifiable marketing
+number — see the [liveness-benchmark](https://github.com/neetixai/liveness-benchmark)
+repo and https://liveliness.neetix.in/benchmarks/.
+
+Honesty note: the benchmark uses LFW (celebrity, non-India-representative) and
+Neetix holds no third-party certification (iBeta / ISO 30107-3 / NIST) yet —
+those figures and caveats are documented in full in the benchmark repo.
+
+- Get a free API key & sandbox: https://liveliness.neetix.in
+- Developer docs: https://liveliness.neetix.in/developers
+- API reference: https://liveliness.neetix.in/api-reference
