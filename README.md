@@ -6,6 +6,11 @@ liveliness (PAD), selfie age checks, revocable biometric templates, 1:N face
 search, document MRZ + US/CA barcode parsing, AML/sanctions screening, KYB and
 identity validation, device/IP risk, and a one-call workflow orchestrator.
 
+- **Website & product:** https://liveliness.neetix.in
+- **Developer guide / quick start:** https://liveliness.neetix.in/developers
+- **Full API reference (OpenAPI):** https://liveliness.neetix.in/api-reference
+- **Open benchmark (LFW View-2, reproducible):** https://liveliness.neetix.in/benchmarks/
+
 **One API, five clients, the same method names everywhere.**
 
 ```
@@ -147,3 +152,24 @@ detail and [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 ## License
 
 [Apache-2.0](LICENSE) — © 2026 Neetix.
+
+## About Neetix Liveliness
+
+Neetix Liveliness is an identity-verification and face-liveness API written in
+pure Rust: passive and active liveness / presentation-attack detection, 1:1 and
+1:N face matching, continuous liveness for video-KYC (V-CIP), document/MRZ
+reading, and revocable biometric templates. It runs as a single self-hostable
+binary and is India-first.
+
+We publish an **open, reproducible accuracy benchmark** (LFW View-2 protocol,
+harness + machine-readable results) rather than an unverifiable marketing
+number — see the [liveness-benchmark](https://github.com/neetixai/liveness-benchmark)
+repo and https://liveliness.neetix.in/benchmarks/.
+
+Honesty note: the benchmark uses LFW (celebrity, non-India-representative) and
+Neetix holds no third-party certification (iBeta / ISO 30107-3 / NIST) yet —
+those figures and caveats are documented in full in the benchmark repo.
+
+- Get a free API key & sandbox: https://liveliness.neetix.in
+- Developer docs: https://liveliness.neetix.in/developers
+- API reference: https://liveliness.neetix.in/api-reference
