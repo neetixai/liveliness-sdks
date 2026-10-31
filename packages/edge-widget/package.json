@@ -1,0 +1,65 @@
+{
+  "name": "@neetix/edge-widget",
+  "version": "0.2.0",
+  "description": "Drop-in, embeddable guided face-capture widget. On-device face detection + passive liveness + auto-capture via the @neetix/edge WASM engine. Nothing is uploaded.",
+  "type": "module",
+  "main": "dist/neetix-edge-widget.js",
+  "module": "src/index.ts",
+  "types": "dist/index.d.ts",
+  "unpkg": "dist/neetix-edge-widget.js",
+  "jsdelivr": "dist/neetix-edge-widget.js",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "types": "tsc --emitDeclarationOnly",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "face-capture",
+    "selfie",
+    "liveness",
+    "passive-liveness",
+    "anti-spoofing",
+    "kyc",
+    "ekyc",
+    "on-device",
+    "wasm",
+    "webcam",
+    "widget",
+    "embeddable",
+    "neetix"
+  ],
+  "license": "Apache-2.0",
+  "author": "Neetix (https://neetix.in)",
+  "homepage": "https://liveliness.neetix.in/edge/",
+  "peerDependencies": {
+    "@neetix/edge": "*"
+  },
+  "peerDependenciesMeta": {
+    "@neetix/edge": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.1",
+    "typescript": "^5.4.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@neetix/edge": "^0.2.0"
+  },
+  "repository": {
+    "directory": "packages/edge-widget"
+  }
+}

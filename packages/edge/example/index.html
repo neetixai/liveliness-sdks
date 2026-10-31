@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>@neetix/edge — on-device face detection + liveness</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #0b0f14; color: #e6edf3;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
+  .sub { color: #9aa7b4; margin: 0 0 16px; font-size: 13px; }
+  #stage { position: relative; width: 640px; max-width: 96vw; }
+  video { display: none; }
+  canvas { width: 100%; border-radius: 12px; background: #000; display: block; }
+  .row { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; justify-content: center; }
+  button {
+    background: #1f6feb; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: #21262d; }
+  button:disabled { opacity: .5; cursor: default; }
+  .stats { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 8px 24px;
+    background: #0e141b; border: 1px solid #1c2430; border-radius: 10px; padding: 14px 18px;
+    width: 640px; max-width: 96vw; box-sizing: border-box; }
+  .stat b { color: #58a6ff; font-variant-numeric: tabular-nums; }
+  code { background: #161b22; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>Your face never touches a server.</h1>
+  <p class="sub">
+    <code>@neetix/edge</code> — detection + passive liveness, 100% on-device (Rust → WASM).
+    Smoke test: loads the built package from <code>../dist/index.js</code>.
+  </p>
+
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+  </div>
+
+  <div class="row">
+    <button id="startBtn" disabled>Start webcam</button>
+    <button id="stopBtn" class="secondary" disabled>Stop</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat">Status: <b id="statusVal">loading wasm…</b></div>
+    <div class="stat">Recognizer: <b id="recog">—</b></div>
+    <div class="stat">Faces: <b id="faceCount">0</b></div>
+    <div class="stat">Detect / frame: <b id="infMs">—</b></div>
+    <div class="stat">Liveness: <b id="live">—</b></div>
+    <div class="stat">Top score: <b id="topScore">—</b></div>
+  </div>
+
+<script type="module">
+// Loads the compiled SDK. Run `npm run build` first, then serve the package
+// root over HTTP (camera requires https:// or localhost).
+import { NeetixEdge } from "../dist/index.js";
+
+const els = {
+  status: document.getElementById("statusVal"),
+  recog: document.getElementById("recog"),
+  faceCount: document.getElementById("faceCount"),
+  infMs: document.getElementById("infMs"),
+  live: document.getElementById("live"),
+  topScore: document.getElementById("topScore"),
+  start: document.getElementById("startBtn"),
+  stop: document.getElementById("stopBtn"),
+};
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+let edge = null, stream = null, running = false, emaMs = 0;
+
+(async () => {
+  try {
+    edge = await NeetixEdge.load();
+    els.status.textContent = "ready — fully local";
+    els.recog.textContent = edge.hasRecognizer ? "present (embed/verify enabled)" : "absent (detect + liveness only)";
+    els.start.disabled = false;
+  } catch (e) {
+    els.status.textContent = "wasm load failed: " + e;
+  }
+})();
+
+function draw(faces) {
+  els.faceCount.textContent = faces.length;
+  let top = 0, liveTxt = "—";
+  faces.forEach((f, i) => {
+    top = Math.max(top, f.score);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#3fb950";
+    ctx.strokeRect(f.box.x, f.box.y, f.box.w, f.box.h);
+    ctx.fillStyle = "#3fb950";
+    ctx.font = "14px monospace";
+    ctx.fillText(f.score.toFixed(2), f.box.x + 2, Math.max(12, f.box.y - 4));
+    ctx.fillStyle = "#ff7b72";
+    for (const [lx, ly] of f.landmarks) {
+      ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    if (i === 0) {
+      const l = edge.liveness(canvas, f); // pass the canvas straight in
+      liveTxt = `${l.live ? "LIVE" : "spoof?"} ${l.score.toFixed(2)}`;
+    }
+  });
+  els.live.textContent = liveTxt;
+  els.topScore.textContent = faces.length ? top.toFixed(3) : "—";
+}
+
+function loop() {
+  if (!running) return;
+  if (video.readyState >= 2) {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const t = performance.now();
+    const faces = edge.detect(canvas);
+    const dt = performance.now() - t;
+    emaMs = emaMs ? emaMs * 0.8 + dt * 0.2 : dt;
+    els.infMs.textContent = emaMs.toFixed(1) + " ms  (" + (1000 / emaMs).toFixed(0) + " fps)";
+    draw(faces);
+  }
+  requestAnimationFrame(loop);
+}
+
+els.start.onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    running = true;
+    els.start.disabled = true; els.stop.disabled = false;
+    els.status.textContent = "detecting (local)";
+    loop();
+  } catch (e) { els.status.textContent = "camera error: " + e; }
+};
+
+els.stop.onclick = () => {
+  running = false;
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  els.start.disabled = false; els.stop.disabled = true;
+  els.status.textContent = "stopped";
+};
+</script>
+</body>
+</html>

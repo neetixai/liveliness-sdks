@@ -1,31 +1,40 @@
 name: CI
 
+# Every job calls the SAME `just` recipe a developer runs locally, so CI and a
+# laptop cannot drift. See justfile / DEVELOPER.md.
+#
+# NOTE: GitHub Actions billing is currently disabled on this organisation, so
+# these jobs do not run — `just verify` on a developer machine is the real
+# gate until that is fixed. Keep the workflow in step with the justfile anyway;
+# the day billing is restored it must pass unchanged.
+
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
+  contract:
+    name: API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - uses: extractions/setup-just@v2
+      - run: just contract
+
   web:
     name: Web + React Native (TypeScript)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Build web SDK
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-      - name: Syntax-check Node example
-        run: node --check examples/node-quickstart.mjs
-      - name: Typecheck React Native SDK
-        working-directory: react-native
-        run: |
-          npm install
-          npm run typecheck
+        with: { node-version: "20" }
+      - uses: extractions/setup-just@v2
+      - run: just web
+      - run: just react-native
+      - run: just edge
 
   flutter:
     name: Flutter (Dart)
@@ -33,40 +42,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
-        with:
-          sdk: stable
-      - name: Analyze + test
-        working-directory: flutter
-        run: |
-          dart pub get
-          dart analyze --fatal-infos
-          dart test
+        with: { sdk: stable }
+      - uses: extractions/setup-just@v2
+      - run: just flutter
 
   swift:
-    name: Swift (SPM)
+    name: iOS / macOS (Swift)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Build + test
-        working-directory: swift
-        run: |
-          swift build
-          swift test
+      - uses: extractions/setup-just@v2
+      - run: just swift
+      - run: just swift-smoke
+      # XCTest exists on a macOS runner, unlike the bare toolchain locally.
+      - name: XCTest suite
+        working-directory: packages/swift
+        run: swift test
 
-  # NOTE: no Android job. The Kotlin module (android/) is shipped write-only
-  # and pre-release: compiling it needs a full Android Gradle Plugin toolchain
-  # (JDK 17 + Android SDK + an app shell project), which we deliberately do
-  # not maintain here yet. The module's README discloses this; a proper
-  # AGP-based job will be added when the Android SDK graduates from
-  # pre-release.
-
-  android-jvm-check:
-    # Compiles the Android client sources as Kotlin/JVM (OkHttp stack is
-    # platform-neutral) — catches compile-breakers without the Android SDK.
+  android:
+    name: Android (Kotlin/JVM)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v4
-      - run: cd android/jvm-check && gradle compileKotlin --console=plain
+      - uses: extractions/setup-just@v2
+      # `just android` prefers gradle (present here) and falls back to kotlinc.
+      - run: just android
+      - name: Decoding smoke test
+        run: |
+          curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v2.1.0/kotlin-compiler-2.1.0.zip -o /tmp/kotlinc.zip
+          unzip -q /tmp/kotlinc.zip -d /tmp/kotlin
+          echo "/tmp/kotlin/kotlinc/bin" >> "$GITHUB_PATH"
+      - run: just android-smoke

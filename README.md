@@ -1,107 +1,157 @@
-# Neetix Liveliness — Client SDKs
+# Neetix Liveliness SDKs
 
-Official client SDKs for **[Neetix Liveliness](https://liveliness.neetix.in)** —
-a pure-Rust identity-verification, face-liveness (presentation-attack detection)
-and video-KYC (V-CIP) API, built India-first and self-hostable.
+Official client SDKs for the **[Neetix Liveliness API](https://liveliness.neetix.in)** —
+a Rust-powered Selfie-KYC suite: face match + passive/active/streaming
+liveliness (PAD), selfie age checks, revocable biometric templates, 1:N face
+search, document MRZ + US/CA barcode parsing, AML/sanctions screening, KYB and
+identity validation, device/IP risk, and a one-call workflow orchestrator.
 
 - **Website & product:** https://liveliness.neetix.in
 - **Developer guide / quick start:** https://liveliness.neetix.in/developers
 - **Full API reference (OpenAPI):** https://liveliness.neetix.in/api-reference
 - **Open benchmark (LFW View-2, reproducible):** https://liveliness.neetix.in/benchmarks/
 
-Publishing: see [PUBLISHING.md](./PUBLISHING.md) for per-registry commands,
-required accounts/tokens and version-bump conventions.
+**One API, five clients, the same method names everywhere.**
 
-One API, five clients. Each wraps the same endpoints (passive / active /
-continuous liveliness, face match, biometric auth, MRZ, revocable templates)
-with platform-native ergonomics + camera capture.
+```
+liveness · faceMatch · ageCheck · faceEnroll · faceSearch · templateProtect
+sessionStart · streamStart · authEnroll · authVerify · mrzParse · documentId
+amlScreen · kybValidate · validateIdentity · deviceAnalyze · workflowRun
+```
+
+Prepaid credits: **1,000 free on signup**, then face-match 2, stream 5,
+workflow 3, KYB 2, document-id 2, everything else 1 credit per call. An
+exhausted balance returns HTTP 402 `insufficient_credits`; every SDK surfaces
+that as a typed error with `status` + `messageCode`.
+
+## 60-second quickstart
+
+1. Get an API key (shown once — save it):
+
+```bash
+curl -X POST https://liveliness.neetix.in/v1/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@company.com"}'
+# → { "api_key": "lv_…", "test_api_key": "lv_test_…", "credits": 1000, … }
+```
+
+Signup returns two keys. The `lv_test_…` one is **free and unmetered** with its
+own isolated gallery and logs — develop against it, then switch to the live
+key. Responses carry `mode: "live" | "test"` so you always know which you hit.
+
+2. Verify a face (TypeScript, Node >= 18):
+
+```ts
+import { NeetixClient } from "@neetix/liveliness";
+import { readFile } from "node:fs/promises";
+
+const nx = new NeetixClient({ apiKey: process.env.NEETIX_API_KEY });
+const jpeg = async (p: string) =>
+  new Blob([await readFile(p)], { type: "image/jpeg" });
+
+const res = await nx.faceMatch(await jpeg("selfie.jpg"), await jpeg("id.jpg"));
+console.log(res.verdict);                 // "approved" | "review" | "declined"
+console.log(res.result.is_same_face, res.result.liveness_score);
+console.log(res.warnings);                // risk-policy codes, e.g. EDITED_IMAGE
+```
+
+Runnable end-to-end version (signup → age check → face match → balance):
+[`examples/node-quickstart.mjs`](examples/node-quickstart.mjs).
 
 ## Packages
 
-| SDK | Path | Package | Verified in this repo |
-|-----|------|---------|-----------------------|
-| Web (TypeScript) | `sdk/web` | `@neetix/liveliness-web` | ✅ `tsc` typecheck + build (emits `dist/`) |
-| React Native | `sdk/react-native` | `@neetix/liveliness-react-native` | ✅ `tsc --noEmit` typecheck |
-| iOS (Swift) | `sdk/swift` | `NeetixLiveliness` (SPM) | ✅ `swift build` (library compiles) |
-| Flutter (Dart) | `sdk/flutter` | `neetix_liveliness` | ✅ `dart analyze` + `dart test` (2/2) |
-| Android (Kotlin) | `sdk/android` | `in.neetix.liveliness` | ⚠️ written, not compiled here (no JDK/Gradle in this env; builds under standard Android/Gradle) |
+| Platform | Package | Status | Install |
+|---|---|---|---|
+| Web / Node (TypeScript) | [`@neetix/liveliness`](packages/web/) | **beta** | `npm i @neetix/liveliness` — [README](packages/web/README.md) |
+| Flutter / Dart | [`neetix_liveliness`](packages/flutter/) | **beta** | pub.dev or a git dependency (`path: packages/flutter`) — [README](packages/flutter/README.md) |
+| iOS / macOS (Swift) | [`NeetixLiveliness`](packages/swift/) | **beta** | SPM / CocoaPods — [README](packages/swift/README.md) |
+| Android (Kotlin) | [`in.neetix:liveliness-android`](packages/android/) | **beta** | JitPack / included module — [README](packages/android/README.md) |
+| React Native | [`@neetix/liveliness-react-native`](packages/react-native/) | **pre-release** | `npm i @neetix/liveliness-react-native` — [README](packages/react-native/README.md) |
+| On-device WASM (browser) | [`@neetix/edge`](packages/edge/) | **preview** | `npm i @neetix/edge` — [README](packages/edge/README.md) |
+| On-device capture widget | [`@neetix/edge-widget`](packages/edge-widget/) | **preview** | `npm i @neetix/edge-widget` — [README](packages/edge-widget/README.md) |
 
-Honesty note: the Swift **library** compiles via `swift build`; its XCTest
-unit tests require Xcode (absent in the bare Swift toolchain) and run in CI /
-Xcode. The Android module is idiomatic and complete but was not compiled in
-this environment, which has no JDK/Gradle.
+> Registry publishing is pending the account setup in
+> [PUBLISHING.md](PUBLISHING.md); until a package is live, install it from this
+> repo (git dependency / included module). All versions move in lockstep —
+> currently **0.2.0**.
 
-## Shared design
+**Status honesty.** *beta* = typechecked/compiled and unit-tested by
+`just verify`, with the TypeScript core exercised against the live API.
+*pre-release* (React Native) shares the verified web core but has not shipped
+in an app. *preview* (`@neetix/edge`, `@neetix/edge-widget`) runs the engine
+on-device via WASM; detection + liveliness ship today, while offline 1:1
+matching waits on production recognizer weights (see
+[packages/edge/README.md](packages/edge/README.md)). Swift unit tests need
+Xcode's XCTest, so the local gate is `swift build` plus a decoding smoke test
+(`just swift-smoke`); the Android client is compile- and decode-verified on a
+plain JVM (`just android android-smoke`), with instrumented tests still
+pending.
 
-Every SDK exposes the same surface:
+## Coverage
 
-- `liveness(selfie)` — passive PAD
-- `faceMatch(selfie, card, fields?)` — 1:1 match + liveliness + signals
-- `authEnroll(userId, selfie)` / `authVerify(userId, selfie)` — biometric login
-- `parseMrz(text)` — passport / ID MRZ
-- Web/RN also: `sessionStart` (active), `streamStart` + `StreamSession`
-  (continuous V-CIP over WebSocket), `templateProtect` / `templateVerify`
+`just contract` compares every SDK against the vendored OpenAPI spec
+(`spec/openapi.yaml`) and fails the build when one falls behind — this is the
+guard that keeps "same surface everywhere" true rather than aspirational.
 
-Camera capture is platform-native (browser `getUserMedia`, AVFoundation on
-iOS, CameraX on Android, `camera`/`image_picker` on Flutter); the API client
-is transport-only so it stays testable without a device.
+<!-- generated by `just parity` -->
+| SDK | Scope | Endpoints wrapped |
+|---|---|---|
+| Web / Node (TS) | server + browser | 46 / 46 |
+| React Native | server + browser | 46 / 46 |
+| Flutter | on-device | 28 / 28 |
+| iOS (Swift) | on-device | 28 / 28 |
+| Android (Kotlin) | on-device | 28 / 28 |
 
-## Quick starts
+**Why the on-device scope is smaller — on purpose.** An API key shipped inside
+an app is extractable, so the mobile SDKs stop at capture-and-verify. The
+back-office surface (review queue, webhook/retention settings, link minting
+and listing, saved workflows, AML monitoring, KYT, DSAR export/delete) exists
+only in the server SDKs, so a decompiled app can never hold a key that drains
+your review queue or deletes your account. The exclusion list, with a reason
+per endpoint, is `SERVER_ONLY` in
+[`tools/contract-check.mjs`](tools/contract-check.mjs).
 
-**Web**
-```ts
-import { NeetixClient, openCamera } from "@neetix/liveliness-web";
-const client = new NeetixClient({ baseUrl: "https://api.neetix.in", apiKey });
-const cam = await openCamera(document.querySelector("video")!);
-const res = await client.liveness(await cam.capture());
+Errors are uniform across platforms: one error type carrying the HTTP `status`
+and the API's stable `messageCode` (`unauthorized`, `no_face_detected`,
+`insufficient_credits`, …), plus an `isInsufficientCredits` convenience flag.
+
+## Repo layout
+
+```
+packages/      the SDKs (one per platform; npm packages are npm workspaces)
+examples/      runnable quickstarts
+spec/          vendored openapi.yaml — refresh with `just sync-spec`
+tools/         contract check + the Swift/Kotlin decoding smoke tests
+justfile       every verification command; CI calls these same targets
 ```
 
-**Web — guided capture** (oval face-guide overlay + live quality meter +
-auto-capture). `startGuidedCapture` streams the front camera into a `<video>`,
-draws an oval guide on an overlay `<canvas>`, measures brightness, sharpness
-(Laplacian) and a face-size heuristic each tick, and auto-captures a JPEG
-once quality holds for ~1s:
+## Working on these SDKs
 
-```ts
-import { NeetixClient, startGuidedCapture } from "@neetix/liveliness-web";
-
-// <video> with an absolutely-positioned <canvas> overlaid on it
-const guide = await startGuidedCapture({
-  video: document.querySelector("video")!,
-  overlay: document.querySelector("canvas")!,
-  onQuality: (q) => console.log(q.brightness, q.sharpness, q.faceSize, q.ok),
-});
-const { blob, readings } = await guide.result; // JPEG + quality readings
-guide.stop();
-const res = await client.liveness(blob);
+```bash
+just verify     # contract + all five SDKs + both WASM packages
+just contract   # API coverage only
+just --list     # everything else
 ```
 
-**React Native**
-```ts
-import { useLiveliness } from "@neetix/liveliness-react-native";
-const nx = useLiveliness({ baseUrl, apiKey });
-const res = await nx.liveness(photoUri); // photoUri from vision-camera / expo-camera
-```
+Toolchains: Node >= 18 (npm workspaces), Dart, Swift, and either gradle or
+`brew install kotlin`. See [DEVELOPER.md](DEVELOPER.md) for the per-package
+detail and [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
-**iOS (Swift)**
-```swift
-let client = NeetixClient(baseURL: "https://api.neetix.in", apiKey: key)
-let cam = try NeetixCamera()
-let jpeg = try await cam.capture()
-let res = try await client.liveness(selfie: .jpeg(jpeg))
-```
+## Docs & help
 
-**Flutter (Dart)**
-```dart
-final client = NeetixClient(baseUrl: 'https://api.neetix.in', apiKey: key);
-final res = await client.liveness(jpegBytes); // from the `camera` plugin
-```
+- API reference & console: **https://liveliness.neetix.in**
+- OpenAPI spec: [`spec/openapi.yaml`](spec/openapi.yaml) (served live at
+  `/openapi.yaml`)
+- Per-SDK READMEs: [web](packages/web/README.md) ·
+  [flutter](packages/flutter/README.md) · [swift](packages/swift/README.md) ·
+  [android](packages/android/README.md) ·
+  [react-native](packages/react-native/README.md) ·
+  [edge](packages/edge/README.md) · [edge-widget](packages/edge-widget/README.md)
+- Examples: [examples/](examples/)
 
-**Android (Kotlin)**
-```kotlin
-val client = NeetixClient("https://api.neetix.in", apiKey)
-val res = client.liveness(jpegBytes) // suspend; jpegBytes from CameraX
-```
+## License
+
+[Apache-2.0](LICENSE) — © 2026 Neetix.
 
 ## About Neetix Liveliness
 

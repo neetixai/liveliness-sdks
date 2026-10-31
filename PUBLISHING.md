@@ -1,187 +1,160 @@
 # Publishing the Neetix Liveliness SDKs
 
-Every package is prepared so that publishing is one command — once the owner
-has created the accounts/tokens listed per registry. Nothing here has been
-published yet.
+Every package is publish-ready: one command each, once the owner has created
+the accounts listed per registry. **Nothing has been published yet** — this
+repo is the canonical source, and the public URLs in every manifest
+(`package.json` `repository`, `pubspec` `repository`, podspec `source`, Maven
+POM/scm) already point at `github.com/neetixai/liveliness-sdks`.
 
-All public-facing URLs (package.json `repository`, pubspec `repository`,
-podspec `source`, Maven POM/scm) point at the public mirror
-**github.com/neetixai/liveliness-sdks**, assumed to contain this `sdk/`
-directory's contents at its root (`web/`, `react-native/`, `swift/`,
-`flutter/`, `android/`). If the layout differs, fix those URLs/paths first —
-each spot is called out below.
+Versions move in **lockstep** — currently `0.2.0` everywhere. See
+[Version bumps](#version-bumps).
 
-Versions are currently `0.1.0` everywhere. Keep the five SDKs in version
-lockstep (see [Version bumps](#version-bumps)).
+Before any publish:
+
+```bash
+just verify          # contract check + every SDK; must be green
+```
 
 ---
 
-## 1. Web — npm (`@neetix/liveliness-web`)
+## 1. npm — `@neetix/liveliness`, `@neetix/liveliness-react-native`, `@neetix/edge`, `@neetix/edge-widget`
 
 **Owner must create (once):**
 - npmjs.com account + the **`@neetix` organization** (npmjs.com → Add
-  Organization; free tier is fine for public packages).
-- An **Automation** granular access token (npmjs.com → Access Tokens) for CI,
-  or just `npm login` locally.
+  Organization; the free tier covers public packages).
+- An **Automation** granular access token for CI, or just `npm login` locally.
 
-**Publish:**
+**Publish (order matters — the dependents resolve by version range):**
+
 ```bash
-cd sdk/web
-npm publish        # prepublishOnly runs typecheck + build; publishConfig sets --access public
+npm publish -w @neetix/liveliness                  # core; others depend on it
+npm publish -w @neetix/liveliness-react-native     # dep: @neetix/liveliness ^0.2.0
+npm publish -w @neetix/edge                        # on-device wasm
+npm publish -w @neetix/edge-widget                 # dep: @neetix/edge ^0.2.0
 ```
 
 Notes:
-- `publishConfig.access: public` is already in package.json (required for the
-  first publish of a scoped package).
-- Verified here: `npm run build` (tsc) clean; `npm pack --dry-run` packs 21
-  files, 18.3 kB (dist/ + src/ + README + LICENSE), no strays.
+- `publishConfig.access: public` is set — required for a scoped package's
+  first publish.
+- `prepublishOnly` runs typecheck + build (+ `npm test` on the core), so a
+  broken package cannot be published by accident.
+- The repo is an **npm workspace**: locally the dependents resolve through the
+  root `node_modules` symlinks, so `just verify` works before anything is on
+  npm.
+- **`@neetix/edge` needs its wasm artefacts** in `packages/edge/wasm/` to
+  build. They are produced in the engine repo and are gitignored here — see
+  [packages/edge/README.md](packages/edge/README.md). The publishable default
+  is the clean build (`hasRecognizer === false`): do **not** ship a bundle
+  built with the prototype recognizer weights, which are non-commercial.
 
-## 2. React Native — npm (`@neetix/liveliness-react-native`)
-
-Same account/org/token as the web package.
-
-**Publish (web must be published first):** the dependency is
-`"@neetix/liveliness-web": "^0.1.0"` (a real version range, not the local
-`file:../web` link), so this package is publish-ready but will only install
-cleanly for consumers after `@neetix/liveliness-web@0.1.0` exists on npm.
-
-```bash
-cd sdk/react-native
-npm publish
-```
-
-Notes:
-- peerDependencies: `react >= 17`, `react-native >= 0.68`. Camera is BYO.
-- Local development still resolves `../web` through the existing
-  `node_modules` symlink / package-lock; if you reinstall from scratch before
-  the web package is on npm, use `npm i ../web` or an `overrides` entry.
-- Verified here: `tsc --noEmit` clean, `tsc` build clean, `npm pack --dry-run`
-  packs 6 files, 6.3 kB.
-
-## 3. Flutter/Dart — pub.dev (`neetix_liveliness`)
+## 2. pub.dev — `neetix_liveliness`
 
 **Owner must create (once):**
-- A Google account signed in to pub.dev (first `dart pub publish` opens a
-  browser OAuth flow; no token to pre-provision).
+- A Google account signed in to pub.dev (`dart pub publish` opens a browser
+  OAuth flow; there is no token to pre-provision).
 - Recommended: a **verified publisher** `neetix.in` (pub.dev → Create
-  publisher; requires proving control of the domain via Google Search
-  Console), then publish under it instead of the personal account.
+  publisher; proves domain control via Google Search Console), then publish
+  under it rather than a personal account.
 
-**Publish:**
 ```bash
-cd sdk/flutter
-dart pub publish
+cd packages/flutter && dart pub publish
 ```
 
-Verified here — `dart pub publish --dry-run` (Dart 3.2.4) passes:
-`Package has 0 warnings.` (archive: CHANGELOG, LICENSE, README, lib/, test/,
-pubspec — 7 kB compressed).
+`dart pub publish --dry-run` must report 0 warnings first.
 
-## 4. iOS — CocoaPods (`NeetixLiveliness`) + SPM
+## 3. iOS — SPM (no account) + CocoaPods `NeetixLiveliness`
 
-**SPM already works with zero accounts:** consumers add the package by git
-URL. Caveat: SPM's versioned resolution requires `Package.swift` at the
-**root** of the repo it points at, so the public repo either needs the swift
-package at its root or a dedicated `neetixai/liveliness-swift` mirror;
-branch-based resolution (`.package(url:, branch:)`) works regardless.
+**SPM works with zero accounts** — consumers add the package by git URL. One
+caveat: SPM's *versioned* resolution expects `Package.swift` at the **root** of
+the repo it points at, and here it lives in `packages/swift/`. Options:
+
+- consumers use branch-based resolution
+  (`.package(url: "…/liveliness-sdks", branch: "main")`), which works today; or
+- publish a thin `neetixai/liveliness-swift` mirror whose root is
+  `packages/swift/` (a push mirror or a release workflow), which unlocks
+  `.package(url:, from: "0.2.0")`.
 
 **CocoaPods — owner must create (once):**
-- A CocoaPods **trunk session** (email-based, no website account):
-  ```bash
-  pod trunk register <email> 'Neetix' --description='laptop'
-  # click the link in the confirmation email
-  ```
-- A git tag `0.1.0` on the public repo (the podspec's `:tag`).
 
-**Publish:**
 ```bash
-cd sdk/swift
-pod trunk push NeetixLiveliness.podspec
+pod trunk register <email> 'Neetix' --description='laptop'
+# then click the link in the confirmation email
 ```
 
-Notes:
-- The podspec mirrors Package.swift: iOS 14 / macOS 12, Swift 5.9, sources
-  `swift/Sources/NeetixLiveliness/**/*.swift`, Apache-2.0. Paths assume the
-  monorepo layout (swift SDK under `swift/`); drop the `swift/` prefixes if
-  publishing from a root-level swift repo — see the note at the top of the
-  podspec.
-- Verified here: `pod ipc spec` renders valid JSON (syntax OK). `pod spec
-  lint` needs the public repo + tag to exist, so it runs at publish time.
+**Publish** (needs the `0.2.0` git tag to exist first):
 
-## 5. Android — JitPack (recommended) or Maven Central
+```bash
+cd packages/swift && pod trunk push NeetixLiveliness.podspec
+```
 
-`sdk/android/build.gradle.kts` now carries a `maven-publish` config:
-publication `release`, **groupId `in.neetix`, artifactId `liveliness-android`,
-sources jar** (AGP `singleVariant("release") { withSourcesJar() }`), full POM
-(Apache-2.0, scm). **Not compiled here — no JDK/Gradle in this environment;
-verification pending toolchain** (`./gradlew publishToMavenLocal` on any
-machine with Android Studio's JDK). Also fixed while in there: added the
-`org.jetbrains.kotlin.plugin.serialization` plugin, which the client's
-`@Serializable` models require.
+The podspec mirrors `Package.swift` (iOS 14 / macOS 12, Swift 5.9, Apache-2.0)
+and its `source_files` are relative to the repo root, i.e. prefixed
+`packages/swift/`. `pod spec lint` only passes once the tag is pushed.
 
-**Option A — JitPack (zero accounts, recommended):**
-- No account, no token, no signing. JitPack builds public GitHub repos on
-  demand: first request of `com.github.neetixai:liveliness-sdks:0.1.0`
-  triggers the build.
-- Repo prerequisites (one-time, in the public repo): a Gradle **wrapper**, a
-  root `settings.gradle.kts` including the module (e.g.
-  `include(":android")` + `project(":android").name = "liveliness-android"`),
-  a root build declaring the AGP/Kotlin plugin versions, and a `jitpack.yml`
-  pinning `jdk: openjdk17`. The module itself is standalone today and has no
-  root project around it.
-- "Publish" = push the tag:
-  ```bash
-  git tag 0.1.0 && git push origin 0.1.0
-  ```
-- Consumers use `maven { url "https://jitpack.io" }` and coordinates
-  `com.github.neetixai.liveliness-sdks:liveliness-android:0.1.0` (JitPack
-  group is `com.github.<owner>`, not `in.neetix`).
+## 4. Android — JitPack (recommended) or Maven Central
 
-**Option B — Maven Central (real `in.neetix` coordinates):**
-- Sonatype **Central Portal** account (central.sonatype.com) + **namespace
-  `in.neetix`** verified via a DNS TXT record on neetix.in.
-- A **GPG key** published to keys.openpgp.org (Central requires signed
-  artifacts + a javadoc jar).
-- The Portal does not accept plain `maven-publish` uploads; add the
-  `com.vanniktech.maven.publish` plugin (wraps signing, javadoc jar and the
-  Portal API) and run:
-  ```bash
-  ./gradlew publishAndReleaseToMavenCentral
-  ```
+**Option A — JitPack (zero accounts).** No token, no signing: JitPack builds
+public GitHub repos on demand from the `release` publication already configured
+in `packages/android/build.gradle.kts`.
+
+Repo prerequisites (one-time, still **TODO** in this repo): a Gradle
+**wrapper**, a root `settings.gradle.kts` including the module, a root build
+declaring the AGP/Kotlin plugin versions, and a `jitpack.yml` pinning
+`jdk: openjdk17`. Today the module is standalone (CI compiles it as
+Kotlin/JVM via `packages/android/jvm-check`).
+
+"Publish" is then just the tag:
+
+```bash
+git tag 0.2.0 && git push origin 0.2.0
+```
+
+Consumers use `maven { url "https://jitpack.io" }` with
+`com.github.neetixai.liveliness-sdks:liveliness-android:0.2.0` (JitPack's
+group is `com.github.<owner>`, not `in.neetix`).
+
+**Option B — Maven Central (real `in.neetix` coordinates).** Needs a Sonatype
+**Central Portal** account, the **`in.neetix` namespace** verified by a DNS TXT
+record on neetix.in, and a **GPG key** on keys.openpgp.org (Central requires
+signed artefacts + a javadoc jar). The Portal does not accept plain
+`maven-publish` uploads — add `com.vanniktech.maven.publish` and run
+`./gradlew publishAndReleaseToMavenCentral`.
 
 ---
 
 ## Version bumps
 
-- **Semver, in lockstep**: all five SDKs share one version (currently
-  `0.1.0`). Bump them together even if only one changed — the RN package
-  depends on the web package by version, and the git tag drives both the
-  podspec and JitPack.
-- Pre-1.0: breaking API change → bump **minor** (0.2.0); fixes/additions →
-  bump **patch** (0.1.1). At 1.0.0, standard semver.
-- A bump touches exactly these places:
-  1. `web/package.json` `version`
-  2. `react-native/package.json` `version` **and** its
-     `@neetix/liveliness-web` range
-  3. `flutter/pubspec.yaml` `version` + a `CHANGELOG.md` entry
-  4. `swift/NeetixLiveliness.podspec` `s.version`
-  5. `android/build.gradle.kts` `version = "..."`
-  6. Git tag `X.Y.Z` on the public repo (podspec `:tag`, JitPack, SPM), pushed
-     after the version commit.
-- Publish order per release: tag → npm web → npm RN → pub.dev → pod trunk.
-  (JitPack/SPM need only the tag.)
+All seven packages share one version. Bump them together even when only one
+changed — the dependents reference each other by range, and the git tag drives
+the podspec, SPM and JitPack.
 
-## Blocked on the owner (summary)
+Pre-1.0: a breaking API change bumps **minor** (`0.3.0`); fixes and additions
+bump **patch** (`0.2.1`). From 1.0.0, standard semver.
 
-| Registry | Needed before one-command publish works |
+A bump touches exactly:
+
+1. `packages/web/package.json`
+2. `packages/react-native/package.json` — `version` **and** the
+   `@neetix/liveliness` range
+3. `packages/edge/package.json`
+4. `packages/edge-widget/package.json` — `version` **and** the `@neetix/edge`
+   range
+5. `packages/flutter/pubspec.yaml` + a `CHANGELOG.md` entry
+6. `packages/swift/NeetixLiveliness.podspec` (`s.version`)
+7. `packages/android/build.gradle.kts` (`version`)
+8. the git tag `X.Y.Z`, pushed after the version commit
+
+Release order: `just verify` → tag → npm (core → RN → edge → edge-widget) →
+pub.dev → CocoaPods. JitPack and SPM need only the tag.
+
+## Blocked on the owner
+
+| Registry | Needed before the one-command publish works |
 |---|---|
-| npm (web + RN) | npmjs account + `@neetix` org; `npm login` or automation token |
-| pub.dev | Google account sign-in (browser flow); optional `neetix.in` verified publisher |
-| CocoaPods | `pod trunk register` email verification; `0.1.0` tag on the public repo |
-| SPM | Nothing (git URL) — but versioned resolution needs `Package.swift` at a repo root |
-| JitPack | Nothing account-wise; public repo needs root Gradle wrapper/settings + tag |
-| Maven Central | Central Portal account + `in.neetix` DNS-verified namespace + GPG key + vanniktech plugin |
-
-Also confirm the actual layout of `github.com/neetixai/liveliness-sdks` — no
-reference to it exists inside this repo; every URL above assumes it mirrors
-`sdk/` at its root.
+| npm (4 packages) | npmjs account + `@neetix` org; `npm login` or an automation token |
+| pub.dev | Google sign-in (browser flow); optional `neetix.in` verified publisher |
+| CocoaPods | `pod trunk register` email verification + the `0.2.0` tag |
+| SPM (versioned) | decide: branch-based resolution, or a `liveliness-swift` root mirror |
+| JitPack | no account; repo needs a root Gradle wrapper/settings + `jitpack.yml` |
+| Maven Central | Central Portal account + DNS-verified `in.neetix` + GPG key + vanniktech plugin |
+| `@neetix/edge` (match) | production recognizer weights — licensed or self-trained |
