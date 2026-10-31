@@ -29,7 +29,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "sync-wasm": "cp \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge.js \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge.d.ts \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge_bg.wasm wasm/",
-    "prepublishOnly": "npm run typecheck && npm run build"
+    "prepublishOnly": "npm run check-wasm && npm run typecheck && npm run build",
+    "check-wasm": "node -e \"const fs=require('fs');for(const f of ['wasm/neetix_edge.js','wasm/neetix_edge_bg.wasm']){if(!fs.existsSync(f)){console.error('MISSING '+f+' \u2014 run: npm run sync-wasm (see README). Publishing without the WASM binary ships a package that cannot load.');process.exit(1)}}const kb=fs.statSync('wasm/neetix_edge_bg.wasm').size/1024;if(kb<1024){console.error('wasm/neetix_edge_bg.wasm is only '+kb.toFixed(0)+'KB \u2014 that is the .d.ts placeholder, not the binary');process.exit(1)}console.log('wasm ok ('+(kb/1024).toFixed(1)+'MB)')\""
   },
   "keywords": [
     "face-detection",

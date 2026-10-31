@@ -97,11 +97,25 @@ and its `source_files` are relative to the repo root, i.e. prefixed
 public GitHub repos on demand from the `release` publication already configured
 in `packages/android/build.gradle.kts`.
 
-Repo prerequisites (one-time, still **TODO** in this repo): a Gradle
-**wrapper**, a root `settings.gradle.kts` including the module, a root build
-declaring the AGP/Kotlin plugin versions, and a `jitpack.yml` pinning
-`jdk: openjdk17`. Today the module is standalone (CI compiles it as
-Kotlin/JVM via `packages/android/jvm-check`).
+Repo prerequisites — **DONE** (2026-10-31): the Gradle wrapper (8.9), a root
+`settings.gradle.kts` mapping `:liveliness-android` to `packages/android`, a
+root `build.gradle.kts` pinning AGP 8.5.2 / Kotlin 1.9.24, and `jitpack.yml`
+with `jdk: openjdk17` and the explicit install command.
+
+Verified by running JitPack's own install command locally:
+
+```bash
+./gradlew :liveliness-android:publishToMavenLocal -x test --no-daemon
+# BUILD SUCCESSFUL -> ~/.m2/.../in/neetix/liveliness-android/0.2.0/
+#   liveliness-android-0.2.0.aar  (classes.jar 440KB, in/neetix/liveliness/*)
+#   + -sources.jar, .pom, .module
+```
+
+`packages/android/capture/` is deliberately **not** in `settings.gradle.kts`:
+it is pre-release and has never been compiled here, and a module that fails to
+configure would take the whole JitPack build — and so the published client —
+down with it. `packages/android/jvm-check` also stays out; it is a standalone
+Kotlin/JVM build (`just android`) that must not need the Android SDK.
 
 "Publish" is then just the tag:
 

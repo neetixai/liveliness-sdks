@@ -1,0 +1,14 @@
+# JitPack build config (PUBLISHING.md §4, Option A).
+#
+# Publishing the Android client is just a git tag: JitPack clones the tag,
+# runs the install below and serves the resulting artifact as
+#   com.github.neetixai.liveliness-sdks:liveliness-android:<tag>
+# JitPack's group is always com.github.<owner> — the in.neetix coordinates in
+# packages/android/build.gradle.kts only apply to a Maven Central release.
+#
+# openjdk17 matches the module's sourceCompatibility/jvmTarget.
+jdk:
+  - openjdk17
+
+install:
+  - ./gradlew :liveliness-android:publishToMavenLocal -x test --no-daemon
