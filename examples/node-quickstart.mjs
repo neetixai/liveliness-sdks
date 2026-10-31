@@ -2,14 +2,14 @@
 // Neetix Liveliness — Node quickstart: signup -> age check -> face match.
 //
 // From a repo clone (builds the web SDK first):
-//   cd web && npm i && npm run build && cd ..
+//   npm install && npm run build -w @neetix/liveliness
 //   node examples/node-quickstart.mjs selfie.jpg id-card.jpg [you@company.com]
 //
-// With an existing key:  NEETIX_API_KEY=nx_... node examples/node-quickstart.mjs selfie.jpg id.jpg
+// With an existing key:  NEETIX_API_KEY=lv_... node examples/node-quickstart.mjs selfie.jpg id.jpg
 //
 // Requires Node >= 18 (global fetch + Blob).
 import { readFile } from "node:fs/promises";
-import { NeetixClient, NeetixApiError } from "../web/dist/index.js";
+import { NeetixClient, NeetixApiError } from "@neetix/liveliness";
 
 const [selfiePath, cardPath, email] = process.argv.slice(2);
 if (!selfiePath || !cardPath) {

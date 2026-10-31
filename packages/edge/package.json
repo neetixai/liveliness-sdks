@@ -1,0 +1,69 @@
+{
+  "name": "@neetix/edge",
+  "version": "0.2.0",
+  "description": "On-device, offline face detection + passive liveness (+ match) in the browser. Rust\u2192WebAssembly, models embedded in the wasm \u2014 your face never leaves the device.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./wasm/neetix_edge_bg.wasm": "./wasm/neetix_edge_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "wasm/neetix_edge.js",
+    "wasm/neetix_edge.d.ts",
+    "wasm/neetix_edge_bg.wasm",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "sync-wasm": "cp \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge.js \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge.d.ts \"${NEETIX_EDGE_PKG:-../../../liveliness-api/edge-poc/pkg-web-neetix}\"/neetix_edge_bg.wasm wasm/",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "face-detection",
+    "liveness",
+    "on-device",
+    "wasm",
+    "webassembly",
+    "kyc",
+    "privacy",
+    "offline",
+    "face-match",
+    "anti-spoofing",
+    "biometric",
+    "edge",
+    "neetix"
+  ],
+  "license": "Apache-2.0",
+  "author": "Neetix (https://neetix.in)",
+  "homepage": "https://liveliness.neetix.in/edge/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neetixai/liveliness-sdks.git",
+    "directory": "packages/edge"
+  },
+  "bugs": {
+    "url": "https://github.com/neetixai/liveliness-sdks/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,7 +1,6 @@
 # Node
 node_modules/
-web/dist/
-react-native/dist/
+packages/*/dist/
 *.tsbuildinfo
 
 # Dart / Flutter

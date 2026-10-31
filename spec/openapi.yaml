@@ -1,0 +1,3697 @@
+openapi: 3.1.0
+
+info:
+  title: Neetix Liveliness API
+  version: 0.1.0
+  summary: Selfie-KYC verification suite — face match, liveness, documents, AML and workflow orchestration.
+  description: |
+    The complete HTTP surface of the Neetix Liveliness API.
+
+    **Authentication.** Most endpoints take a tenant API key as
+    `Authorization: Bearer <key>` (`Basic <key>` is also accepted for
+    Digitap-compatible callers). Console surfaces (links, reviews, settings,
+    workflows, AML monitoring, billing reads) additionally accept the
+    `lv_session` cookie minted by Google sign-in — the cookie is used only when
+    no `Authorization` header is present, and cookie-authed mutations are
+    CSRF-guarded by an Origin/Referer check. `/v1/admin/*` uses a dedicated
+    operator key. A few endpoints are deliberately public (signup, leads,
+    hosted-link token endpoints, health probes).
+
+    **Credits.** Self-serve (DB-backed) keys are prepaid: each billable call
+    deducts the endpoint's credit cost from the tenant balance and fails with
+    `402 insufficient_credits` when it cannot. Costs are listed per endpoint in
+    this document (e.g. face match = 2 credits). Enterprise/static config keys
+    are postpaid and exempt.
+
+    **Errors.** Failures use one JSON envelope (`ErrorEnvelope`) with a stable
+    `message_code`. The face-match no-face/undecodable-image case returns a
+    Digitap-compatible 422 `fail` body instead.
+
+    **Response signing.** Face-match responses are signed with Ed25519 when
+    configured — the detached signature is in the `X-Neetix-Signature` header
+    and the public key at `GET /v1/verification-key`.
+  contact:
+    name: Neetix
+    url: https://liveliness.neetix.in/contact
+    email: hello@neetix.in
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+
+servers:
+  - url: https://liveliness.neetix.in
+    description: Production
+
+tags:
+  - name: Health
+    description: Liveness/readiness probes, Prometheus metrics, the response-signing public key and the hosted capture page.
+  - name: Signup & Leads
+    description: Public self-serve trial signup and the enterprise contact form. Both are per-IP rate limited.
+  - name: Console Auth
+    description: Google sign-in (Authorization Code + PKCE) and console sessions. Sessions authenticate console surfaces only — never inference endpoints.
+  - name: API Keys
+    description: Session-authed key management for the developer console. The raw key is returned exactly once; only its SHA-256 hash is stored.
+  - name: Face Verification
+    description: The core 1:1 selfie-vs-ID verification (Digitap-compatible), plus the 1:N tenant gallery (enroll/search with blocklist support).
+  - name: Liveness & Age
+    description: Single-selfie passive liveness, facial age estimation, and biometric authentication against an enrolled face.
+  - name: Sessions
+    description: Active-liveliness challenge sessions — randomized head-pose/blink challenges verified frame by frame.
+  - name: Streams
+    description: Continuous-liveliness (V-CIP) — a challenge script plus a WebSocket frame-ingest endpoint with per-frame status and a final verdict.
+  - name: Templates
+    description: Cancelable / revocable biometric templates (ISO/IEC 24745) — store a non-invertible template instead of a raw embedding.
+  - name: Documents
+    description: Passport/ID MRZ parsing with check-digit validation, and US/CA driver's-license PDF417/AAMVA verification.
+  - name: AML
+    description: Sanctions/PEP watchlist screening and ongoing monitoring with clear-to-hit webhook alerts.
+  - name: Validation
+    description: Indian identity-document (Aadhaar/PAN/Voter/DL), business (GSTIN/PAN/CIN) and contact (email/phone) validation.
+  - name: Risk
+    description: Transaction monitoring (KYT), crypto wallet screening and device/IP fraud-risk analysis.
+  - name: Workflows
+    description: The one-call orchestrator that runs several checks and folds them into a single verdict, plus saved (reusable) workflow configurations.
+  - name: Hosted Links
+    description: Single-use hosted verification URLs — the end user verifies in the browser and the link owner is charged.
+  - name: Reviews
+    description: The human review queue for verifications the engine left at verdict "review", including retained (downscaled) capture images.
+  - name: Settings
+    description: Per-tenant webhook override and image-retention configuration.
+  - name: Billing
+    description: Prepaid credit balance, ledger, purchasable packs and Dodo Payments top-ups.
+  - name: Admin
+    description: Operator dashboard behind a dedicated admin key. When no admin key is configured every route answers 404 (the surface is hidden).
+
+webhooks:
+  verificationResult:
+    post:
+      operationId: webhookVerificationResult
+      summary: Verification result delivered to the tenant webhook
+      security: []
+      description: |
+        Fired after every `/v1/face/face-match` verification (fire-and-forget).
+        Delivery is tenant-first — the tenant's `webhook_url`/`webhook_secret`
+        from `/v1/settings` when both are set, else the globally configured
+        endpoint. The body is signed with HMAC-SHA256 over the exact bytes and
+        sent as `X-Signature-V2: sha256=<hex>`. Retries up to 3 times with
+        exponential backoff on 5xx/transport errors; 4xx stops retries.
+      tags: [Settings]
+      parameters:
+        - $ref: "#/components/parameters/SignatureV2Header"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceMatchResponse"
+      responses:
+        "200":
+          description: Return any 2xx to acknowledge the delivery.
+  amlMonitorHit:
+    post:
+      operationId: webhookAmlMonitorHit
+      summary: AML monitored subject transitioned clear to hit
+      security: []
+      description: |
+        Fired when an ongoing-monitoring rescreen finds a previously clear
+        subject on the current watchlist. Same tenant-first delivery and
+        `X-Signature-V2` HMAC signature as verification results.
+      tags: [AML]
+      parameters:
+        - $ref: "#/components/parameters/SignatureV2Header"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  const: aml.monitor.hit
+                subject_id:
+                  type: string
+                  format: uuid
+                client_id:
+                  type: string
+                name:
+                  type: string
+                dob:
+                  type: [string, "null"]
+                ref_id:
+                  type: [string, "null"]
+                matches:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/AmlMatch"
+                screened_at:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Return any 2xx to acknowledge the delivery.
+  linkCompleted:
+    post:
+      operationId: webhookLinkCompleted
+      summary: Hosted verification link completed
+      security: []
+      description: |
+        Fired when an end user completes a hosted verification link. Same
+        tenant-first delivery and `X-Signature-V2` HMAC signature as
+        verification results.
+      tags: [Hosted Links]
+      parameters:
+        - $ref: "#/components/parameters/SignatureV2Header"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  const: link.completed
+                token:
+                  type: string
+                client_id:
+                  type: string
+                label:
+                  type: [string, "null"]
+                request_id:
+                  type: string
+                result:
+                  $ref: "#/components/schemas/LinkCompactResult"
+                completed_at:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Return any 2xx to acknowledge the delivery.
+
+paths:
+  # ── Health & meta ─────────────────────────────────────────────────────────
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      description: Cheap liveness probe — the process is up and models are loaded. Public.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /ready:
+    get:
+      operationId: getReady
+      summary: Readiness probe
+      description: Readiness probe — additionally checks the database is reachable. Public.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ready
+        "503":
+          description: Database unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: not_ready
+                  reason:
+                    type: string
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus metrics
+      description: |
+        Prometheus text exposition — per (method, route, status) request
+        counters, a latency histogram and an in-flight gauge. Requires an API
+        key unless the deployment sets `[metrics] public = true`.
+      tags: [Health]
+      security:
+        - ApiKeyAuth: []
+        - {}
+      responses:
+        "200":
+          description: Prometheus 0.0.4 text exposition.
+          content:
+            text/plain: {}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /capture:
+    get:
+      operationId: getCapturePage
+      summary: Hosted capture page
+      description: A self-contained browser page that opens the camera, captures a selfie and posts it to `/v1/liveness`. Public.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: The capture page.
+          content:
+            text/html: {}
+
+  /v1/verification-key:
+    get:
+      operationId: getVerificationKey
+      summary: Response-signing public key
+      description: The Ed25519 public key used to sign face-match response bodies (detached signature in the `X-Neetix-Signature` header). Public.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: The signing key, or `enabled false` when signing is not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  algorithm:
+                    type: [string, "null"]
+                    description: '`ed25519`, or null when signing is disabled.'
+                  public_key_base64:
+                    type: string
+                  signed_header:
+                    type: string
+                    const: X-Neetix-Signature
+                  enabled:
+                    type: boolean
+                    description: Present (false) only when signing is disabled.
+
+  # ── Signup & leads ────────────────────────────────────────────────────────
+  /v1/signup:
+    post:
+      operationId: signup
+      summary: Self-serve trial signup
+      description: |
+        Issues a DB-backed trial API key with signup bonus credits. Public, per-IP
+        rate limited (5 signups/hour). The raw key is returned once; only its
+        hash is stored. One trial key per email.
+      tags: [Signup & Leads]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Trial key issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignupResponse"
+        "400":
+          description: Invalid email, duplicate email, or the per-IP signup rate limit was hit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/leads:
+    post:
+      operationId: submitLead
+      summary: Enterprise contact form
+      description: |
+        Stores an enterprise/sales lead and notifies the team in real time.
+        Public, per-IP rate limited (10 submissions/hour). The hidden `website`
+        field is a honeypot — filling it silently drops the submission.
+      tags: [Signup & Leads]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name:
+                  type: string
+                  maxLength: 120
+                company:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                volume:
+                  type: string
+                  description: Expected checks per month.
+                message:
+                  type: string
+                  maxLength: 2000
+                website:
+                  type: string
+                  description: Honeypot — leave empty.
+      responses:
+        "200":
+          description: Lead captured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  # ── Console auth & keys ───────────────────────────────────────────────────
+  /v1/auth/config:
+    get:
+      operationId: getAuthConfig
+      summary: Is Google sign-in configured?
+      description: Lets the console decide whether to show the "Sign in with Google" button. Public.
+      tags: [Console Auth]
+      security: []
+      responses:
+        "200":
+          description: Sign-in availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  google:
+                    type: boolean
+
+  /v1/auth/google/start:
+    get:
+      operationId: googleStart
+      summary: Begin Google sign-in
+      description: Sets the `lv_oauth` state/PKCE cookie and redirects (302) to Google's consent screen. 404 when Google sign-in is not configured.
+      tags: [Console Auth]
+      security: []
+      responses:
+        "302":
+          description: Redirect to Google's consent screen.
+          headers:
+            Location:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/auth/google/callback:
+    get:
+      operationId: googleCallback
+      summary: Google OAuth callback
+      description: |
+        Verifies the `state` against the `lv_oauth` cookie, exchanges the code
+        (PKCE), verifies the id_token via Google's tokeninfo endpoint
+        (`aud` must match, `email_verified` must be true), creates a console
+        session (`lv_session` cookie) and redirects to `/console/`.
+      tags: [Console Auth]
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: Google sends `access_denied` when the user cancels.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Session created; redirect to the console.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+        "400":
+          description: Missing code or oauth state mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      summary: End the console session
+      description: Deletes the session row and clears the `lv_session` cookie. CSRF origin-checked.
+      tags: [Console Auth]
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Session ended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/auth/me:
+    get:
+      operationId: getMe
+      summary: Session identity and keys
+      description: The signed-in user's email, tenant id and API keys (8-char hash prefixes — the ids `POST /v1/keys/revoke` accepts).
+      tags: [Console Auth]
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Identity and key list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  email:
+                    type: string
+                  client_id:
+                    type: [string, "null"]
+                    description: Null until the first key is minted.
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        prefix:
+                          type: string
+                          description: First 8 chars of the stored key hash.
+                        label:
+                          type: string
+                        active:
+                          type: boolean
+                        created_at:
+                          type: string
+                          format: date-time
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/keys:
+    post:
+      operationId: mintKey
+      summary: Mint an API key
+      description: |
+        Session-authed, CSRF origin-checked. A brand-new Google user gets a
+        fresh tenant plus signup credits; an existing tenant gets an additional
+        key for the SAME `client_id` with no new credits. The raw key is
+        returned exactly once.
+      tags: [API Keys]
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Key minted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  api_key:
+                    type: string
+                  client_id:
+                    type: string
+                  credits_granted:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/keys/revoke:
+    post:
+      operationId: revokeKey
+      summary: Revoke an API key
+      description: Deactivates one of the caller's own keys by the 8-char hash prefix shown in `GET /v1/auth/me`. Session-authed, CSRF origin-checked.
+      tags: [API Keys]
+      security:
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key_id]
+              properties:
+                key_id:
+                  type: string
+                  description: The 8-character lowercase-hex key prefix.
+                  pattern: "^[0-9a-fA-F]{8}$"
+      responses:
+        "200":
+          description: Key revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Face verification ─────────────────────────────────────────────────────
+  /v1/face/face-match:
+    post:
+      operationId: faceMatch
+      summary: Face match (selfie vs ID)
+      description: |
+        The core verification — 1:1 face match, passive liveness, quality
+        metrics, spectral forensics, capture-integrity signals and a 1:N
+        gallery check (duplicate / blocklist / identity velocity), folded into
+        an approved/review/declined verdict with warnings.
+
+        **Cost: 2 credits.** Digitap-compatible envelope; responses are
+        Ed25519-signed when configured (`X-Neetix-Signature`). The result is
+        also delivered asynchronously to the tenant webhook (tenant settings
+        first, global config fallback). When the tenant has image retention
+        on, downscaled copies of both images are stored for the review queue.
+      tags: [Face Verification]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/FaceMatchForm"
+      responses:
+        "200":
+          description: Verification completed (any verdict).
+          headers:
+            x-request-id:
+              schema:
+                type: string
+            X-Neetix-Signature:
+              description: '`ed25519=<base64>` detached signature over the exact body bytes (when signing is configured).'
+              schema:
+                type: string
+            X-Neetix-Key:
+              description: Base64 Ed25519 public key (when signing is configured).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceMatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          description: No face found in one or both images, or an image could not be decoded (Digitap-compatible fail body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceMatchFail"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/face/verify:
+    post:
+      operationId: faceVerify
+      summary: Face match (alias)
+      description: "Friendlier alias for `POST /v1/face/face-match` — same handler, same request and response. **Cost: 2 credits.**"
+      tags: [Face Verification]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/FaceMatchForm"
+      responses:
+        "200":
+          description: Verification completed (any verdict).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceMatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          description: No face found or undecodable image (Digitap-compatible fail body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceMatchFail"
+
+  /v1/face/enroll:
+    post:
+      operationId: enrollFace
+      summary: Enroll a face in the tenant gallery
+      description: "Embeds the face and stores it under `subject_id` in the tenant's 1:N gallery; `blocklisted` entries flag future matches. **Cost: 1 credit.**"
+      tags: [Face Verification]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person, subject_id]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Face image (aliases `selfie`, `image`, `face`). Max 5 MB.
+                subject_id:
+                  type: string
+                blocklisted:
+                  type: string
+                  description: '`true` / `1` / `yes` to blocklist the subject.'
+      responses:
+        "200":
+          description: Enrolled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  enrollment_id:
+                    type: string
+                    format: uuid
+                  subject_id:
+                    type: string
+                  blocklisted:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  /v1/face/search:
+    post:
+      operationId: searchFaces
+      summary: Search the tenant gallery (1:N)
+      description: "Embeds the query face and returns the closest enrolled subjects (best first), with a `blocklist_hit` flag when a blocklisted subject clears the match threshold. **Cost: 1 credit.**"
+      tags: [Face Verification]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Query face image. Max 5 MB.
+                top_k:
+                  type: string
+                  description: Max matches to return (1-50, default 5).
+      responses:
+        "200":
+          description: Ranked matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  request_id:
+                    type: string
+                  match_count:
+                    type: integer
+                  blocklist_hit:
+                    type: boolean
+                  matches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        subject_id:
+                          type: string
+                        confidence:
+                          type: number
+                        cosine_similarity:
+                          type: number
+                        blocklisted:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  # ── Liveness, age & biometric auth ───────────────────────────────────────
+  /v1/liveness:
+    post:
+      operationId: liveness
+      summary: Passive liveness check
+      description: "Single-selfie passive liveness plus face signals. **Cost: 1 credit.**"
+      tags: [Liveness & Age]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Selfie image (alias `selfie`). Max 5 MB.
+      responses:
+        "200":
+          description: Liveness verdict.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [Approved, Declined, "Not Finished"]
+                  liveness_score:
+                    type: number
+                    description: 0-100.
+                  liveness_status:
+                    type: string
+                    enum: [genuine, spoof, not_evaluated]
+                  liveness_evaluated:
+                    type: boolean
+                  face_count:
+                    type: integer
+                  threshold:
+                    type: number
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  /v1/age:
+    post:
+      operationId: ageCheck
+      summary: Facial age estimation
+      description: "Single-selfie age bracket + midpoint estimate. On engines without an age module the bracket is `unknown` and the estimate null. **Cost: 1 credit.**"
+      tags: [Liveness & Age]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Selfie image. Max 5 MB.
+      responses:
+        "200":
+          description: Age estimate.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  age_bracket:
+                    type: string
+                    description: One of 0-2, 3-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+ or unknown.
+                  age_estimate:
+                    type: [number, "null"]
+                    description: Bracket midpoint in years.
+                  face_count:
+                    type: integer
+                  liveness_score:
+                    type: [number, "null"]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  /v1/auth/enroll:
+    post:
+      operationId: authEnroll
+      summary: Enroll a face for biometric authentication
+      description: "Registers a user's face (single face required, genuine capture enforced) for later `POST /v1/auth/verify`. **Cost: 1 credit.**"
+      tags: [Liveness & Age]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person, user_id]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Face image. Max 5 MB.
+                user_id:
+                  type: string
+      responses:
+        "200":
+          description: Enrolled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  enrollment_id:
+                    type: string
+                    format: uuid
+                  user_id:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  /v1/auth/verify:
+    post:
+      operationId: authVerify
+      summary: Authenticate a returning user by face
+      description: "Passive liveness plus a 1:1 match against the user's enrolled face(s). **Cost: 1 credit.**"
+      tags: [Liveness & Age]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person, user_id]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Face image. Max 5 MB.
+                user_id:
+                  type: string
+      responses:
+        "200":
+          description: Authentication result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  authenticated:
+                    type: boolean
+                  user_id:
+                    type: string
+                  match_confidence:
+                    type: number
+                  match_threshold:
+                    type: number
+                  liveness_score:
+                    type: number
+                  liveness_ok:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "404":
+          description: No enrolled face for that user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  # ── Sessions & streams ────────────────────────────────────────────────────
+  /v1/session/start:
+    post:
+      operationId: startSession
+      summary: Start an active-liveliness session
+      description: |
+        Issues a randomized ordered challenge list (center, a shuffled head
+        turn, then blink or a second turn). Sessions expire after 10 minutes.
+        Free — the charge lands on `/verify`.
+      tags: [Sessions]
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  session_id:
+                    type: string
+                    format: uuid
+                  challenges:
+                    type: array
+                    items:
+                      type: string
+                      description: '`center` | `left` | `right` | `blink`.'
+                  expires_at:
+                    type: string
+                    format: date-time
+                  instructions:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/session/{id}/verify:
+    post:
+      operationId: verifySession
+      summary: Verify session challenge frames
+      description: |
+        Upload one frame per challenge as `frame_0`, `frame_1`, … The server
+        checks each frame's head pose (or blink) against the requested
+        challenge and runs passive liveness on the frontal frame.
+        **Cost: 2 credits.** Single-use — a session already verified or expired
+        answers 400.
+      tags: [Sessions]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                frame_0:
+                  type: string
+                  format: binary
+                frame_1:
+                  type: string
+                  format: binary
+                frame_2:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Per-challenge results and the session verdict.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  session_id:
+                    type: string
+                  verdict:
+                    type: string
+                    enum: [approved, declined]
+                  liveness_score:
+                    type: number
+                  spoof_detected:
+                    type: boolean
+                  challenges_passed:
+                    type: boolean
+                  challenges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index:
+                          type: integer
+                        expected:
+                          type: string
+                        observed:
+                          type: string
+                        yaw:
+                          type: number
+                        passed:
+                          type: boolean
+        "400":
+          description: Session already decided, expired, or malformed frames.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/stream/start:
+    post:
+      operationId: startStream
+      summary: Start a continuous-liveliness (V-CIP) session
+      description: "Issues a session id, a randomized challenge script and the WebSocket URL to stream frames to. **Cost: 5 credits** (charged at start). Sessions expire after 10 minutes."
+      tags: [Streams]
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Stream session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  session_id:
+                    type: string
+                    format: uuid
+                  stream_url:
+                    type: string
+                    description: '`/v1/stream/{session_id}` — open a WebSocket here.'
+                  challenges:
+                    type: array
+                    items:
+                      type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                  instructions:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/stream/{id}:
+    get:
+      operationId: streamFrames
+      summary: Stream frames (WebSocket)
+      description: |
+        WebSocket upgrade for the session minted by `/v1/stream/start`
+        (single-use — the connection claims the session). Send JPEG frames as
+        binary messages (max 3 MB each); the server answers each with a JSON
+        `frame` status message. Send the text message `end` (or close) to
+        finish and receive the final JSON `verdict` message.
+      tags: [Streams]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "101":
+          description: Switching protocols — WebSocket established.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Stream session not found, expired, or already claimed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ── Templates ─────────────────────────────────────────────────────────────
+  /v1/template/protect:
+    post:
+      operationId: protectTemplate
+      summary: Create a revocable biometric template
+      description: |
+        Embeds the face and projects it through a tenant-and-version-specific
+        key into a non-invertible binary template (ISO/IEC 24745). Store the
+        template instead of a raw embedding; bump `key_version` to revoke all
+        previously issued templates. **Cost: 1 credit.**
+      tags: [Templates]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Face image. Max 5 MB.
+                key_version:
+                  type: string
+                  description: Positive integer, default 1.
+      responses:
+        "200":
+          description: Protected template.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  version:
+                    type: integer
+                  template:
+                    type: string
+                    description: Base64 template — store this.
+                  bits:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  /v1/template/verify:
+    post:
+      operationId: verifyTemplate
+      summary: Compare two protected templates
+      description: "Hamming similarity + match decision. Templates from different key versions never match (`revoked` true). **Cost: 1 credit.**"
+      tags: [Templates]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_a, template_b]
+              properties:
+                template_a:
+                  type: string
+                template_b:
+                  type: string
+      responses:
+        "200":
+          description: Similarity result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  similarity:
+                    type: number
+                  is_match:
+                    type: boolean
+                  match_threshold:
+                    type: number
+                  revoked:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  # ── Documents ─────────────────────────────────────────────────────────────
+  /v1/document/mrz:
+    post:
+      operationId: parseMrz
+      summary: Parse and validate an MRZ
+      description: "Parses a TD1 (3x30) or TD3 (2x44) machine-readable zone and validates all check digits. **Cost: 1 credit.**"
+      tags: [Documents]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mrz]
+              properties:
+                mrz:
+                  type: string
+                  description: The MRZ lines joined with newlines.
+      responses:
+        "200":
+          description: Parsed MRZ with per-field check-digit results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  valid:
+                    type: boolean
+                  format:
+                    type: string
+                    enum: [TD1, TD3]
+                  document_type:
+                    type: string
+                  issuing_country:
+                    type: string
+                  surname:
+                    type: string
+                  given_names:
+                    type: string
+                  document_number:
+                    type: string
+                  nationality:
+                    type: string
+                  date_of_birth:
+                    type: string
+                  sex:
+                    type: string
+                  expiry_date:
+                    type: string
+                  checks:
+                    type: object
+                    properties:
+                      document_number:
+                        type: boolean
+                      date_of_birth:
+                        type: boolean
+                      expiry_date:
+                        type: boolean
+                      composite:
+                        type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/document/id:
+    post:
+      operationId: verifyIdDocument
+      summary: Verify a US/CA driver's license / state ID
+      description: |
+        Decodes the PDF417 barcode on the card back, parses its AAMVA payload
+        and derives expiry/age checks; the optional front (portrait side) gets
+        a face-presence check plus spectral document forensics. At least one of
+        `back` / `front` is required. An unreadable barcode is NOT an HTTP
+        error — the call succeeds with `checks.barcode_decoded false` and a
+        `BARCODE_UNREADABLE` warning. **Cost: 2 credits** (charged after the
+        request shape is validated).
+      tags: [Documents]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                back:
+                  type: string
+                  format: binary
+                  description: Barcode side (alias `barcode`). Max 5 MB.
+                front:
+                  type: string
+                  format: binary
+                  description: Portrait side (alias `card`). Max 5 MB.
+      responses:
+        "200":
+          description: Parsed AAMVA data, checks and warnings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  aamva:
+                    type: [object, "null"]
+                    description: Parsed AAMVA payload (name, dob, expiry, license number, address, sex, height, eye color, REAL ID flag). Null when no barcode parsed.
+                  face_found:
+                    type: [boolean, "null"]
+                  forensics:
+                    oneOf:
+                      - $ref: "#/components/schemas/Forensics"
+                      - type: "null"
+                  checks:
+                    type: object
+                    properties:
+                      barcode_decoded:
+                        type: boolean
+                      aamva_parsed:
+                        type: boolean
+                      expired:
+                        type: [boolean, "null"]
+                      underage_18:
+                        type: [boolean, "null"]
+                      underage_21:
+                        type: [boolean, "null"]
+                      dates_valid:
+                        type: [boolean, "null"]
+                  warnings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Warning"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+
+  # ── AML ───────────────────────────────────────────────────────────────────
+  /v1/aml/screen:
+    post:
+      operationId: amlScreen
+      summary: One-shot sanctions/PEP screen
+      description: "Fuzzy-matches a name (optionally with DOB) against the loaded watchlist; hits come back best first. **Cost: 1 credit.**"
+      tags: [AML]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                dob:
+                  type: string
+                  description: YYYY or YYYY-MM-DD.
+                threshold:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+      responses:
+        "200":
+          description: Screening result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AmlScreenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/aml/monitor:
+    post:
+      operationId: createAmlMonitor
+      summary: Add a subject to ongoing monitoring
+      description: |
+        Stores the subject and screens it immediately. Every later watchlist
+        rescreen re-checks it; a clear-to-hit transition fires the tenant
+        webhook (`aml.monitor.hit`). **Cost: 1 credit** (same tag as a one-shot
+        screen). Accepts an API key or a console session (cookie-authed
+        mutations are CSRF origin-checked).
+      tags: [AML]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                dob:
+                  type: string
+                  description: YYYY or YYYY-MM-DD.
+                ref_id:
+                  type: string
+                  description: The caller's own reference for this subject.
+      responses:
+        "200":
+          description: Subject stored with its initial screen result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  screened_against:
+                    type: integer
+                  subject:
+                    $ref: "#/components/schemas/AmlSubject"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      operationId: listAmlMonitor
+      summary: List monitored subjects
+      description: The tenant's monitored subjects, newest first. Accepts an API key or a console session.
+      tags: [AML]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Monitored subjects.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  subjects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AmlSubject"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/aml/monitor/{id}:
+    delete:
+      operationId: deleteAmlMonitor
+      summary: Stop monitoring a subject
+      description: 404 covers both an unknown id and another tenant's subject (no existence leak). Accepts an API key or a console session.
+      tags: [AML]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Subject removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  id:
+                    type: string
+                  deleted:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Validation ────────────────────────────────────────────────────────────
+  /v1/validate/identity:
+    post:
+      operationId: validateIdentity
+      summary: Validate Indian identity documents
+      description: |
+        Per-field format + checksum validation for Aadhaar (Verhoeff), PAN,
+        Voter ID and Driving License numbers. Aadhaar is echoed **masked** only
+        — the raw number is never returned or logged. **Cost: 1 credit.**
+      tags: [Validation]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                aadhaar:
+                  type: string
+                pan:
+                  type: string
+                voter:
+                  type: string
+                dl:
+                  type: string
+      responses:
+        "200":
+          description: Per-field validation results (only submitted fields appear).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  fields:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/validate/contact:
+    post:
+      operationId: validateContact
+      summary: Validate email / phone
+      description: "Email validation with disposable/role-based flags; phone normalization to E.164 with a mobile heuristic. **Cost: 1 credit.**"
+      tags: [Validation]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        "200":
+          description: Per-field validation results (only submitted fields appear).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  fields:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/kyb/validate:
+    post:
+      operationId: kybValidate
+      summary: Validate Indian business identifiers
+      description: "GSTIN (with real GSTN check-digit validation), PAN and CIN format + field decoding. **Cost: 2 credits.**"
+      tags: [Validation]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gstin:
+                  type: string
+                pan:
+                  type: string
+                cin:
+                  type: string
+      responses:
+        "200":
+          description: Per-identifier validation results (only submitted fields appear).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  # ── Risk ──────────────────────────────────────────────────────────────────
+  /v1/txn/monitor:
+    post:
+      operationId: txnMonitor
+      summary: Transaction monitoring (KYT)
+      description: "Rule-based monitoring over a transaction batch (high value, structuring, velocity, round-tripping) with tunable thresholds. **Cost: 1 credit.**"
+      tags: [Risk]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactions]
+              properties:
+                transactions:
+                  type: array
+                  items:
+                    type: object
+                    required: [amount, timestamp, direction]
+                    properties:
+                      amount:
+                        type: number
+                      timestamp:
+                        type: integer
+                        description: Unix epoch seconds.
+                      direction:
+                        type: string
+                        enum: [credit, debit]
+                      counterparty:
+                        type: string
+                thresholds:
+                  type: object
+                  description: Optional rule-threshold overrides (high_value, ctr_threshold, structuring knobs, velocity windows). Unset knobs use India-relevant defaults.
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Monitoring report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  txn_count:
+                    type: integer
+                  flagged:
+                    type: boolean
+                  risk_level:
+                    type: string
+                  flags:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/wallet/screen:
+    post:
+      operationId: walletScreen
+      summary: Screen a crypto wallet address
+      description: "Exact, case-insensitive match against the provisioned blocklist (or an inline `blocklist` supplied with the request). **Cost: 1 credit.**"
+      tags: [Risk]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  type: string
+                blocklist:
+                  type: array
+                  description: Optional inline blocklist to screen against instead of the provisioned default.
+                  items:
+                    type: object
+                    required: [address, chain, category, source]
+                    properties:
+                      address:
+                        type: string
+                      chain:
+                        type: string
+                      category:
+                        type: string
+                      source:
+                        type: string
+      responses:
+        "200":
+          description: Screening result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  address:
+                    type: string
+                  screened_against:
+                    type: integer
+                  hit:
+                    type: boolean
+                  matches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address:
+                          type: string
+                        chain:
+                          type: string
+                        category:
+                          type: string
+                        source:
+                          type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  /v1/device/analyze:
+    post:
+      operationId: deviceAnalyze
+      summary: Device and IP fraud-risk analysis
+      description: "Scores device-integrity and network signals (emulator, root, tampering, virtual camera, VPN/proxy/Tor/datacenter IP) into a risk score, level and flags. **Cost: 1 credit.**"
+      tags: [Risk]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Device signals — all fields optional; booleans default false.
+              properties:
+                os:
+                  type: string
+                model:
+                  type: string
+                emulator:
+                  type: boolean
+                rooted:
+                  type: boolean
+                app_tampered:
+                  type: boolean
+                debugger_attached:
+                  type: boolean
+                screen_sharing:
+                  type: boolean
+                virtual_camera:
+                  type: boolean
+                ip:
+                  type: string
+                vpn:
+                  type: boolean
+                proxy:
+                  type: boolean
+                tor:
+                  type: boolean
+                datacenter:
+                  type: boolean
+              additionalProperties: true
+      responses:
+        "200":
+          description: Risk assessment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  risk_score:
+                    type: number
+                  risk_level:
+                    type: string
+                    enum: [low, medium, high]
+                  ip_class:
+                    type: [string, "null"]
+                  flags:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code:
+                          type: string
+                        weight:
+                          type: number
+                        description:
+                          type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+
+  # ── Workflows ─────────────────────────────────────────────────────────────
+  /v1/workflow/run:
+    post:
+      operationId: runWorkflow
+      summary: Run a multi-check workflow
+      description: |
+        Runs the requested checks (`liveness`, `face_match`, `mrz`, `aml`,
+        `device`) against the same engines the standalone endpoints use, then
+        folds them into one approved/review/declined verdict. Provide either an
+        inline comma-separated `checks` field or a saved `workflow_id` (inline
+        `checks` wins when both are sent). **Cost: 3 credits.**
+      tags: [Workflows]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                checks:
+                  type: string
+                  description: Comma list, e.g. `liveness,face_match,mrz,aml,device`.
+                workflow_id:
+                  type: string
+                  description: UUID of a saved workflow — used only when `checks` is absent.
+                person:
+                  type: string
+                  format: binary
+                  description: Selfie image (liveness / face_match). Max 5 MB.
+                card:
+                  type: string
+                  format: binary
+                  description: ID image (face_match). Max 5 MB.
+                mrz:
+                  type: string
+                  description: MRZ text (mrz check).
+                name:
+                  type: string
+                  description: Applicant name (aml check).
+                dob:
+                  type: string
+                  description: Applicant DOB (aml check).
+                device:
+                  type: string
+                  description: Device/IP signals as a JSON string (device check).
+      responses:
+        "200":
+          description: Per-check results and the aggregate verdict.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  verdict:
+                    type: string
+                    enum: [approved, review, declined]
+                  checks:
+                    type: object
+                    description: One entry per requested check.
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "404":
+          description: The referenced saved workflow does not exist for this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/workflows:
+    get:
+      operationId: listWorkflows
+      summary: List saved workflows
+      description: The tenant's saved workflow configurations, newest first. Accepts an API key or a console session.
+      tags: [Workflows]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Saved workflows.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  workflows:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SavedWorkflow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createWorkflow
+      summary: Save a workflow configuration
+      description: |
+        Validates and stores a reusable configuration. `config.checks` must be
+        a non-empty array of known check names; `config.thresholds` is an
+        optional object. Names are unique per tenant. Accepts an API key or a
+        console session (cookie-authed mutations are CSRF origin-checked).
+      tags: [Workflows]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveWorkflowRequest"
+      responses:
+        "200":
+          description: Workflow saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  workflow:
+                    $ref: "#/components/schemas/SavedWorkflow"
+        "400":
+          description: Invalid name/config, or the name is already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/workflows/{id}:
+    put:
+      operationId: updateWorkflow
+      summary: Update a saved workflow
+      description: Replaces name + config. 404 covers both an unknown id and another tenant's workflow (no existence leak).
+      tags: [Workflows]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveWorkflowRequest"
+      responses:
+        "200":
+          description: Workflow updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  workflow:
+                    $ref: "#/components/schemas/SavedWorkflow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteWorkflow
+      summary: Delete a saved workflow
+      description: Same tenant-scoped 404 rule as update.
+      tags: [Workflows]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Workflow deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  id:
+                    type: string
+                  deleted:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Hosted links ──────────────────────────────────────────────────────────
+  /v1/links:
+    post:
+      operationId: createLink
+      summary: Mint a hosted verification link
+      description: |
+        Creates a single-use URL the end user opens in a browser to verify
+        themselves. Free to mint — the `face_match` charge (2 credits) lands on
+        the link owner when the end user actually verifies. Lifetime defaults
+        to 72 hours (clamped 1-720). Accepts an API key or a console session
+        (cookie-authed mutations are CSRF origin-checked).
+      tags: [Hosted Links]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 160
+                expires_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 720
+                  default: 72
+      responses:
+        "200":
+          description: Link minted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  token:
+                    type: string
+                  url:
+                    type: string
+                    description: The hosted verify page URL to send to the end user.
+                  label:
+                    type: [string, "null"]
+                  expires_at:
+                    type: string
+                    format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      operationId: listLinks
+      summary: List verification links
+      description: The tenant's links with status and result summary, newest first. Accepts an API key or a console session.
+      tags: [Hosted Links]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: The tenant's links.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  links:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VerifyLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/links/{token}:
+    get:
+      operationId: getLinkInfo
+      summary: Link status (public)
+      description: Status for the hosted verify page. No auth — the token is the capability; per-IP rate limited (30/hour). Says nothing about the link owner.
+      tags: [Hosted Links]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/LinkToken"
+      responses:
+        "200":
+          description: Link status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [pending, completed, expired]
+                  label:
+                    type: [string, "null"]
+                  expired:
+                    type: boolean
+                  expires_at:
+                    type: string
+                    format: date-time
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/links/{token}/verify:
+    post:
+      operationId: verifyLink
+      summary: Complete a verification link (public)
+      description: |
+        The end user submits selfie + ID; the standard face-match pipeline runs
+        and the LINK OWNER is charged (`face_match`, 2 credits). Single-use:
+        completion is atomic, so a concurrent duplicate answers 410 and the
+        duplicate charge is refunded. Bad-image 422s keep the link pending so
+        the user can retry. Per-IP rate limited (30/hour). The owner is
+        notified via the tenant webhook (`link.completed`).
+      tags: [Hosted Links]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/LinkToken"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [person, card]
+              properties:
+                person:
+                  type: string
+                  format: binary
+                  description: Selfie image (alias `selfie`). Max 5 MB.
+                card:
+                  type: string
+                  format: binary
+                  description: Reference/ID image (aliases `id_card`, `aadhaar`). Max 5 MB.
+      responses:
+        "200":
+          description: Verification stored and the link completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  token:
+                    type: string
+                  request_id:
+                    type: string
+                  result:
+                    $ref: "#/components/schemas/LinkCompactResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: The link was already used or has expired (`message_code` is `link_gone`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableImage"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  # ── Reviews ───────────────────────────────────────────────────────────────
+  /v1/reviews:
+    get:
+      operationId: listReviews
+      summary: List the review queue
+      description: |
+        The tenant's verifications whose stored verdict is `review`, newest
+        first. Already-decided rows stay listed with their decision attached.
+        Accepts an API key or a console session.
+      tags: [Reviews]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          description: Max rows (default 100).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Review queue entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  reviews:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ReviewEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/reviews/{request_id}/decision:
+    post:
+      operationId: decideReview
+      summary: Record a review decision
+      description: |
+        Records `approved` | `declined` (case-insensitive, note capped at 500
+        chars) onto the stored verification and writes an explicit audit row.
+        404 covers unknown id, another tenant's verification AND "was never in
+        review" (no existence leak). Cookie-authed mutations are CSRF
+        origin-checked.
+      tags: [Reviews]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, declined]
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Decision recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  request_id:
+                    type: string
+                  decision:
+                    type: string
+                    enum: [approved, declined]
+                  note:
+                    type: [string, "null"]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/reviews/{request_id}/image/{kind}:
+    get:
+      operationId: getReviewImage
+      summary: Retained capture image
+      description: |
+        The retained (downscaled, max 640 px long edge) capture behind a review
+        entry, as raw JPEG bytes. Exists only when the tenant had
+        `retain_images` on at verification time; rows are purged after the
+        tenant's retention window. 404 covers unknown request id, another
+        tenant's verification AND "not retained". Accepts an API key or a
+        console session.
+      tags: [Reviews]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [person, card]
+      responses:
+        "200":
+          description: The retained JPEG.
+          content:
+            image/jpeg: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Settings ──────────────────────────────────────────────────────────────
+  /v1/settings:
+    get:
+      operationId: getSettings
+      summary: Read tenant settings
+      description: The tenant's webhook + image-retention settings; defaults when never saved. Accepts an API key or a console session.
+      tags: [Settings]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Current settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: updateSettings
+      summary: Update tenant settings
+      description: |
+        Partial update — absent fields keep their stored value; an EMPTY STRING
+        clears `webhook_url` / `webhook_secret` back to the global config.
+        `retention_days` must be 7-90. When both webhook fields are set, all
+        tenant events (verification results, AML clear-to-hit, link
+        completions) are delivered there with the same HMAC `X-Signature-V2`
+        scheme under the tenant's secret. Cookie-authed PUTs are CSRF
+        origin-checked.
+      tags: [Settings]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                webhook_url:
+                  type: string
+                  description: http(s) URL; empty string clears the override.
+                  maxLength: 2000
+                webhook_secret:
+                  type: string
+                  description: Empty string clears the override.
+                  maxLength: 500
+                retain_images:
+                  type: boolean
+                retention_days:
+                  type: integer
+                  minimum: 7
+                  maximum: 90
+      responses:
+        "200":
+          description: The updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Billing ───────────────────────────────────────────────────────────────
+  /v1/account/export:
+    get:
+      tags: [Account]
+      summary: Export account data (DSAR)
+      description: >-
+        Data-subject access request: returns the calling tenant's stored
+        account data — profile, key metadata, billing ledger, verification
+        log metadata — as JSON. Biometric raw images are excluded unless
+        image retention is enabled for the tenant.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Full account data export.
+        "401":
+          description: Missing or invalid API key.
+  /v1/account/delete:
+    post:
+      tags: [Account]
+      summary: Delete account data (DSAR)
+      description: >-
+        Data-subject deletion request: wipes biometric data, verification
+        images and logs, and scrubs the account email. Financial records
+        required for accounting are retained. Irreversible.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deletion completed; summary of what was removed.
+        "401":
+          description: Missing or invalid API key.
+  /v1/billing/balance:
+    get:
+      operationId: billingBalance
+      summary: Credit balance
+      description: The caller's prepaid credit balance. Accepts an API key or a console session (a session with no key yet sees an empty account).
+      tags: [Billing]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Balance.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  client_id:
+                    type: string
+                  balance:
+                    type: integer
+                  metered:
+                    type: boolean
+                    description: False for exempt (enterprise/static-key) callers.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/billing/ledger:
+    get:
+      operationId: billingLedger
+      summary: Credit ledger
+      description: The caller's credit movements, newest first. Accepts an API key or a console session.
+      tags: [Billing]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          description: Max entries (default 50).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ledger entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  client_id:
+                    type: string
+                  balance:
+                    type: integer
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        delta:
+                          type: integer
+                        balance_after:
+                          type: integer
+                        reason:
+                          type: string
+                          description: e.g. `charge:face_match`, `signup_bonus`, `topup:dodo`, `admin_grant`.
+                        ref_id:
+                          type: [string, "null"]
+                        created_at:
+                          type: string
+                          format: date-time
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/billing/packs:
+    get:
+      operationId: billingPacks
+      summary: Purchasable credit packs
+      description: The configured top-up packs. Accepts an API key or a console session.
+      tags: [Billing]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Available packs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  packs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        credits:
+                          type: integer
+                        display_price:
+                          type: [string, "null"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/billing/topup:
+    post:
+      operationId: billingTopup
+      summary: Start a credit top-up
+      description: |
+        Creates a Dodo Payments checkout session for a pack; the customer pays
+        on the returned `checkout_url`. Credits are granted ONLY when the
+        `payment.succeeded` webhook arrives. Accepts an API key or a console
+        session (cookie-authed POSTs are CSRF origin-checked).
+      tags: [Billing]
+      security:
+        - ApiKeyAuth: []
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pack]
+              properties:
+                pack:
+                  type: string
+                  description: A pack id from `GET /v1/billing/packs`.
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Checkout session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  pack:
+                    type: string
+                  credits:
+                    type: integer
+                  checkout_url:
+                    type: string
+                  session_id:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/billing/webhook/dodo:
+    post:
+      operationId: dodoWebhook
+      summary: Dodo Payments webhook
+      description: |
+        Inbound webhook from Dodo Payments. Authenticated by the
+        Standard-Webhooks HMAC signature headers (`webhook-id`,
+        `webhook-timestamp`, `webhook-signature`) — NOT an API key. Idempotent:
+        the provider payment/refund id is inserted first and credits move only
+        when that insert was fresh. `payment.succeeded` grants the credits
+        named in the session metadata; `refund.succeeded` claws them back.
+      tags: [Billing]
+      security: []
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Standard-Webhooks event envelope from Dodo.
+              additionalProperties: true
+      responses:
+        "200":
+          description: Event processed (or acknowledged as ignored / already processed).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [credited, clawed_back, noted, ignored, already_processed]
+                  balance:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Signature verification failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ── Admin ─────────────────────────────────────────────────────────────────
+  /v1/admin/overview:
+    get:
+      operationId: adminOverview
+      summary: Operator overview
+      description: Signup/lead/spend aggregates and 30-day per-endpoint usage. Admin key required; 404 when no admin key is configured (the surface is hidden).
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      responses:
+        "200":
+          description: Aggregates.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  signups_total:
+                    type: integer
+                  signups_7d:
+                    type: integer
+                  leads_total:
+                    type: integer
+                  credits_spent_7d:
+                    type: integer
+                  credits_spent_30d:
+                    type: integer
+                  balance_total:
+                    type: integer
+                  checks_by_endpoint_30d:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                        count:
+                          type: integer
+                        credits:
+                          type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/accounts:
+    get:
+      operationId: adminAccounts
+      summary: Signup accounts
+      description: Per-signup balance and usage, newest first. Admin key required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  accounts:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/leads:
+    get:
+      operationId: adminLeads
+      summary: Captured leads
+      description: Enterprise leads captured by `POST /v1/leads`, newest first. Admin key required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Leads.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  leads:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/credits/grant:
+    post:
+      operationId: adminGrantCredits
+      summary: Grant credits
+      description: Manual credit grant to an existing tenant (ledger reason `admin_grant`). Grants to unknown tenants are refused. Admin key required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, credits]
+              properties:
+                client_id:
+                  type: string
+                credits:
+                  type: integer
+                  exclusiveMinimum: 0
+                note:
+                  type: string
+      responses:
+        "200":
+          description: Grant applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  client_id:
+                    type: string
+                  balance:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/aml/rescreen:
+    post:
+      operationId: adminAmlRescreen
+      summary: Rescreen all monitored subjects
+      description: |
+        FREE rescreen of every monitored subject (all tenants) against the
+        loaded watchlist. Clear-to-hit transitions fire the subject owner's
+        webhook. Refused (400) when no watchlist is loaded — rescreening
+        against an empty list would silently clear real hits. Admin key
+        required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      responses:
+        "200":
+          description: Sweep summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  subjects:
+                    type: integer
+                  new_hits:
+                    type: integer
+                  cleared:
+                    type: integer
+                  errors:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/aml/reload:
+    post:
+      operationId: adminAmlReload
+      summary: Hot-reload the AML watchlist
+      description: |
+        Re-reads the configured watchlist file and swaps the live list in place
+        (no restart). When the fresh list is non-empty, every monitored subject
+        is rescreened against it in the background (free), exactly like boot.
+        Admin key required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      responses:
+        "200":
+          description: Reload result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  entries_before:
+                    type: integer
+                  entries_after:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/images/purge:
+    post:
+      operationId: adminPurgeImages
+      summary: Purge expired retained images
+      description: |
+        Deletes retained verification images past each tenant's retention
+        window (30-day default for tenants that never saved settings). The
+        opportunistic per-store purge keeps active tenants clean; this sweeps
+        everyone, including tenants that stopped verifying. Admin key required.
+      tags: [Admin]
+      security:
+        - AdminKey: []
+      responses:
+        "200":
+          description: Purge result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: success
+                  deleted:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Tenant API key: `Authorization: Bearer <key>`. `Basic <key>` is also
+        accepted (the token is compared as an opaque credential, mirroring the
+        Digitap secret). Self-serve keys are prepaid and metered; static config
+        keys are postpaid/exempt.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: lv_session
+      description: |
+        Console session cookie minted by Google sign-in. Used only when no
+        `Authorization` header is present, and only on console surfaces (keys,
+        billing, links, reviews, settings, workflows, AML monitoring) — never
+        inference endpoints. Cookie-authed mutations are CSRF-guarded by an
+        Origin/Referer check (403 on mismatch).
+    AdminKey:
+      type: http
+      scheme: bearer
+      description: |
+        Dedicated operator key for `/v1/admin/*` (`[admin] api_key`). When no
+        admin key is configured, every admin route answers 404 — the surface
+        is hidden entirely. A wrong key answers 401.
+
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      description: Max rows to return (default 200).
+      schema:
+        type: integer
+    LinkToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-char link token.
+      schema:
+        type: string
+    SignatureV2Header:
+      name: X-Signature-V2
+      in: header
+      required: true
+      description: '`sha256=<hex>` — HMAC-SHA256 of the exact body bytes under the webhook secret. Recompute and compare to authenticate the callback.'
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed request (missing/invalid field, malformed multipart).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    PaymentRequired:
+      description: Prepaid credit balance cannot cover this call (`message_code` is `insufficient_credits`). Top up via `POST /v1/billing/topup`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Authenticated but not allowed — e.g. a cookie-authed mutation whose Origin/Referer does not match the request host (CSRF guard).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Resource not found (tenant-scoped — also covers another tenant's resource; no existence leak).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    PayloadTooLarge:
+      description: An uploaded part exceeds the 5 MB per-image cap.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnprocessableImage:
+      description: The image could not be decoded, or no face was detected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: Rate limit exceeded — slow down and retry later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    StatusSuccess:
+      type: object
+      properties:
+        status:
+          type: string
+          const: success
+
+    ErrorEnvelope:
+      type: object
+      description: The standard error envelope every failure uses (except the Digitap-compatible face-match 422 fail body).
+      required: [success, statusCode, message, message_code, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        statusCode:
+          type: integer
+        message:
+          type: string
+        message_code:
+          type: string
+          description: Stable machine-readable failure code.
+          enum:
+            - unauthorized
+            - forbidden
+            - bad_request
+            - validation_error
+            - image_decode_failed
+            - no_face_detected
+            - payload_too_large
+            - insufficient_credits
+            - not_found
+            - database_error
+            - internal_error
+            - rate_limited
+            - link_gone
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+              enum:
+                - authentication_error
+                - invalid_request_error
+                - image_error
+                - request_too_large
+                - billing_error
+                - not_found_error
+                - api_error
+                - rate_limit_error
+            detail:
+              type: string
+
+    HealthResponse:
+      type: object
+      required: [status, version, model_version]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+        model_version:
+          type: string
+        git_sha:
+          type: [string, "null"]
+
+    SignupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          const: success
+        api_key:
+          type: string
+          description: Shown only once — store it.
+        client_id:
+          type: string
+        monthly_quota:
+          type: integer
+        credits:
+          type: integer
+          description: Signup bonus balance.
+        message:
+          type: string
+
+    FaceMatchForm:
+      type: object
+      required: [person, card]
+      properties:
+        person:
+          type: string
+          format: binary
+          description: Selfie image (alias `selfie`). Max 5 MB.
+        card:
+          type: string
+          format: binary
+          description: Reference/ID image (aliases `id_card`, `aadhaar`). Max 5 MB.
+        clientRefId:
+          type: string
+          description: Correlation id echoed back (alias `client_ref_id`). Generated when absent.
+        customer_id:
+          type: string
+          description: Optional customer linkage (persisted to the audit log; also keys byte-replay detection).
+        lead_id:
+          type: string
+        capture_nonce:
+          type: string
+          description: SDK capture-attestation nonce (with `client_signature`).
+        client_signature:
+          type: string
+          description: Base64 Ed25519 signature over sha256(selfie) || nonce from the capture SDK.
+
+    Warning:
+      type: object
+      required: [code, severity, description]
+      properties:
+        code:
+          type: string
+          description: e.g. LOW_LIVENESS, SCREEN_REPLAY, MULTIPLE_FACES, DUPLICATE_IDENTITY, BLOCKLISTED, REPLAYED_CAPTURE, DOCUMENT_EXPIRED.
+        severity:
+          type: string
+          enum: [review, decline]
+        description:
+          type: string
+
+    QualityMetrics:
+      type: object
+      properties:
+        sharpness:
+          type: number
+        brightness:
+          type: number
+          description: Mean luminance 0-255.
+        face_area_ratio:
+          type: number
+        score:
+          type: number
+          description: Aggregate 0-100 quality score.
+        blurry:
+          type: boolean
+
+    Forensics:
+      type: object
+      properties:
+        screen_replay_score:
+          type: number
+          description: 0-100 likelihood of a screen recapture.
+        synthetic_score:
+          type: number
+          description: 0-100 likelihood of synthetic/manipulated imagery.
+        high_freq_ratio:
+          type: number
+        spectral_peak:
+          type: number
+
+    CaptureIntegrity:
+      type: object
+      properties:
+        selfie_sha256:
+          type: string
+        exif_present:
+          type: boolean
+        camera:
+          type: string
+        software:
+          type: string
+        edited:
+          type: boolean
+        c2pa_manifest_present:
+          type: boolean
+        replayed:
+          type: boolean
+          description: Same exact bytes previously submitted for a different customer.
+        signed_capture:
+          type: boolean
+
+    FaceSignals:
+      type: object
+      properties:
+        mask_confidence:
+          type: number
+        left_eye_open:
+          type: number
+        right_eye_open:
+          type: number
+        age_bracket:
+          type: string
+        gender:
+          type: string
+          enum: [female, male]
+        emotion:
+          type: string
+          enum: [neutral, happy, sad, surprise, fear, disgust, anger]
+
+    FaceMatchResult:
+      type: object
+      description: Digitap-compatible field names first, then the richer in-house liveliness/quality/telemetry fields.
+      properties:
+        is_same_face:
+          type: boolean
+        same_face_confidence:
+          type: number
+          description: 0-100.
+        is_person_image_blurry:
+          type: boolean
+        is_card_image_blurry:
+          type: boolean
+        person_image_correctly_identified:
+          type: boolean
+        card_image_correctly_identified:
+          type: boolean
+        decision:
+          type: string
+          enum: [APPROVED, REJECTED]
+        match_threshold:
+          type: number
+        cosine_similarity:
+          type: number
+        liveness_score:
+          type: number
+        liveness_status:
+          type: string
+          enum: [genuine, spoof, unknown]
+        spoof_detected:
+          type: boolean
+        liveness_threshold:
+          type: number
+        person_quality:
+          $ref: "#/components/schemas/QualityMetrics"
+        card_quality:
+          $ref: "#/components/schemas/QualityMetrics"
+        person_face_count:
+          type: integer
+        card_face_count:
+          type: integer
+        forensics:
+          $ref: "#/components/schemas/Forensics"
+        face_signals:
+          $ref: "#/components/schemas/FaceSignals"
+        capture:
+          $ref: "#/components/schemas/CaptureIntegrity"
+        document_forensics:
+          $ref: "#/components/schemas/Forensics"
+        model_version:
+          type: string
+        latency_ms:
+          type: integer
+
+    FaceMatchResponse:
+      type: object
+      required: [status, statusCode, verdict, warnings, clientRefId, requestId, result]
+      properties:
+        status:
+          type: string
+          const: success
+          description: Transport status (Digitap compatibility) — always `success` on a 200.
+        statusCode:
+          type: integer
+          const: 200
+        verdict:
+          type: string
+          enum: [approved, declined, review]
+          description: Business verdict.
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
+        clientRefId:
+          type: string
+        requestId:
+          type: string
+        result:
+          $ref: "#/components/schemas/FaceMatchResult"
+
+    FaceMatchFail:
+      type: object
+      description: Digitap-compatible 422 fail body for no-face / undecodable-image cases.
+      properties:
+        status:
+          type: string
+          const: fail
+        statusCode:
+          type: integer
+          const: 422
+        clientRefId:
+          type: string
+        requestId:
+          type: string
+        error:
+          type: string
+          description: e.g. "Face not found in one or both of the images."
+
+    AmlMatch:
+      type: object
+      properties:
+        matched_name:
+          type: string
+        score:
+          type: number
+        list:
+          type: string
+          description: Source list, e.g. "UN Consolidated".
+        country:
+          type: [string, "null"]
+        program:
+          type: [string, "null"]
+        dob_match:
+          type: boolean
+
+    AmlScreenResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          const: success
+        query:
+          type: string
+        screened_against:
+          type: integer
+          description: Watchlist entry count.
+        threshold:
+          type: number
+        hit:
+          type: boolean
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/AmlMatch"
+
+    AmlSubject:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        dob:
+          type: [string, "null"]
+        ref_id:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [clear, hit]
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/AmlMatch"
+        last_screened_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    SaveWorkflowRequest:
+      type: object
+      required: [name, config]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        config:
+          type: object
+          required: [checks]
+          properties:
+            checks:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                enum: [liveness, face_match, mrz, aml, device]
+            thresholds:
+              type: object
+              additionalProperties: true
+
+    SavedWorkflow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        config:
+          type: object
+          properties:
+            checks:
+              type: array
+              items:
+                type: string
+            thresholds:
+              type: object
+              additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    LinkCompactResult:
+      type: object
+      description: The compact result stored on a completed link.
+      properties:
+        verdict:
+          type: string
+          enum: [approved, declined, review]
+        confidence:
+          type: number
+        liveness:
+          type: number
+        warnings:
+          type: array
+          items:
+            type: string
+            description: Warning codes only.
+
+    VerifyLink:
+      type: object
+      properties:
+        token:
+          type: string
+        url:
+          type: string
+        label:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [pending, completed, expired]
+          description: A pending row past its expiry reads as `expired` (computed on read).
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/LinkCompactResult"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+
+    ReviewEntry:
+      type: object
+      properties:
+        request_id:
+          type: string
+        client_ref_id:
+          type: string
+          description: Hosted-link verifications appear as `link:<token>`.
+        created_at:
+          type: string
+          format: date-time
+        confidence:
+          type: number
+        liveness_score:
+          type: number
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
+        decision:
+          type: [string, "null"]
+          description: Null until a reviewer rules.
+        note:
+          type: [string, "null"]
+
+    TenantSettings:
+      type: object
+      properties:
+        status:
+          type: string
+          const: success
+        client_id:
+          type: string
+        webhook_url:
+          type: [string, "null"]
+        webhook_secret:
+          type: [string, "null"]
+        retain_images:
+          type: boolean
+        retention_days:
+          type: integer
+          minimum: 7
+          maximum: 90
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null when the tenant never saved settings.

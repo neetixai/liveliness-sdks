@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>@neetix/edge-widget — drop-in guided face capture (demo)</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #0b0f14; color: #e6edf3;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 28px 16px 60px;
+  }
+  h1 { font-size: 21px; margin: 0 0 4px; font-weight: 680; }
+  .sub { color: #9aa7b4; margin: 0 0 20px; font-size: 13px; text-align: center; max-width: 460px; }
+  .cols { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+  .panel { width: 420px; max-width: 94vw; }
+  .opts { display: flex; gap: 14px; flex-wrap: wrap; margin: 0 0 14px; font-size: 13px; color: #c8d3de; }
+  label.chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  #log {
+    background: #0e141b; border: 1px solid #1c2430; border-radius: 10px; padding: 12px 14px;
+    width: 420px; max-width: 94vw; min-height: 120px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #7ee2a8; white-space: pre-wrap; word-break: break-word; box-sizing: border-box;
+  }
+  #shot { margin-top: 12px; border-radius: 10px; max-width: 420px; width: 100%; display: none; border: 1px solid #1c2430; }
+  a { color: #58a6ff; }
+  code { background: #161b22; padding: 1px 5px; border-radius: 4px; }
+  .foot { margin-top: 22px; font-size: 12px; color: #9aa7b4; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>Your face never touches a server.</h1>
+  <p class="sub">
+    Smoke-test harness for <code>@neetix/edge-widget</code>. Detection + passive liveness run
+    fully on-device. Below runs the built-in <b>stub engine</b> until <code>@neetix/edge</code> is
+    linked — the capture UX, auto-capture and metadata are identical.
+  </p>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="opts">
+        <label class="chk"><input type="checkbox" id="optLiveness" checked /> livenessRequired</label>
+        <label class="chk"><input type="checkbox" id="optAuto" checked /> autoCapture</label>
+        <label class="chk"><input type="checkbox" id="optMirror" checked /> mirror</label>
+      </div>
+      <!-- ↓ this is the one-line embed a lender drops in -->
+      <div id="neetix-capture"></div>
+    </div>
+
+    <div class="panel">
+      <div id="log">waiting…</div>
+      <img id="shot" alt="captured frame" />
+    </div>
+  </div>
+
+  <p class="foot">
+    On-device engine + privacy pitch: <a href="https://liveliness.neetix.in/edge/">liveliness.neetix.in/edge</a>
+  </p>
+
+  <!-- 1) drop in the bundle -->
+  <script src="../dist/neetix-edge-widget.js"></script>
+  <!-- 2) mount it -->
+  <script>
+    const logEl = document.getElementById("log");
+    const shot = document.getElementById("shot");
+    const t0 = Date.now();
+    const log = (msg) => {
+      logEl.textContent = `[+${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}\n` + logEl.textContent;
+    };
+
+    let handle = null;
+    function boot() {
+      if (handle) handle.stop();
+      shot.style.display = "none";
+      logEl.textContent = "";
+      log("NeetixCapture v" + NeetixCapture.version + " — mounting…");
+      handle = NeetixCapture.mount("#neetix-capture", {
+        livenessRequired: document.getElementById("optLiveness").checked,
+        autoCapture: document.getElementById("optAuto").checked,
+        mirror: document.getElementById("optMirror").checked,
+        // wasmUrl: "../.../neetix_edge_bg.wasm",  // ← wire the real engine here
+        onState: (s) => log("state → " + s),
+        onError: (err) => log("ERROR [" + err.code + "] " + err.message),
+        onCapture: (blob, meta) => {
+          log(
+            "CAPTURED " + (blob.size / 1024).toFixed(1) + " KB jpeg\n" +
+            "  liveness: " + meta.livenessScore.toFixed(2) +
+            " (live=" + meta.live + ", genuine=" + meta.genuine + ")\n" +
+            "  faceBox:  " + JSON.stringify(meta.faceBox) + "\n" +
+            "  quality:  fill=" + meta.quality.faceFillHeight.toFixed(2) +
+            " center=" + meta.quality.centerOffset.toFixed(2) +
+            " sharp=" + meta.quality.sharpness.toFixed(0) +
+            " bright=" + meta.quality.brightness.toFixed(0) + "\n" +
+            "  image:    " + meta.width + "x" + meta.height,
+          );
+          // The host decides what to do with the blob. Here we just preview it.
+          shot.src = URL.createObjectURL(blob);
+          shot.style.display = "block";
+        },
+      });
+    }
+
+    ["optLiveness", "optAuto", "optMirror"].forEach((id) =>
+      document.getElementById(id).addEventListener("change", boot),
+    );
+    boot();
+  </script>
+</body>
+</html>

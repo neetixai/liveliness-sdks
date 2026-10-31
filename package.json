@@ -1,0 +1,27 @@
+{
+  "name": "neetix-liveliness-sdks",
+  "private": true,
+  "description": "Monorepo for the Neetix Liveliness client SDKs. The npm packages live in packages/*; Flutter, Swift and Android packages sit alongside them and are built with their own toolchains (see justfile).",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neetixai/liveliness-sdks.git"
+  },
+  "workspaces": [
+    "packages/web",
+    "packages/react-native",
+    "packages/edge",
+    "packages/edge-widget"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "contract": "node tools/contract-check.mjs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspace @neetix/liveliness --workspace @neetix/edge"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

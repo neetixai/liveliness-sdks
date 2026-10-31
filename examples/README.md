@@ -1,14 +1,16 @@
 # Examples
 
 All examples talk to the live API at `https://liveliness.neetix.in` and
-self-signup for 500 free credits when `NEETIX_API_KEY` is not set.
+self-signup for 1,000 free credits when `NEETIX_API_KEY` is not set.
 
 ## Node (`node-quickstart.mjs`)
 
 ```bash
-cd web && npm i && npm run build && cd ..
+npm install && npm run build -w @neetix/liveliness   # from the repo root
 node examples/node-quickstart.mjs selfie.jpg id-card.jpg you@company.com
 ```
+
+Pass `NEETIX_API_KEY=lv_test_…` to run it free against your test key.
 
 Flow: signup → age check (skips gracefully if `/v1/age` isn't rolled out on
 the deployment yet) → face match → remaining balance.
@@ -16,19 +18,19 @@ the deployment yet) → face match → remaining balance.
 ## Dart / Flutter (`flutter_example.dart`)
 
 ```bash
-cd flutter && dart pub get
+cd packages/flutter && dart pub get
 dart run example/flutter_example.dart selfie.jpg id-card.jpg
 ```
 
-(The same file lives at `flutter/example/flutter_example.dart` so it resolves
-the package without extra setup.)
+(The same file lives at `packages/flutter/example/flutter_example.dart` so it
+resolves the package without extra setup.)
 
 The same file drops straight into a Flutter app that depends on
 `neetix_liveliness` (swap `dart:io` file reads for camera bytes).
 
 ## Swift snippet
 
-Add the package (see [`swift/README.md`](../swift/README.md)), then:
+Add the package (see [`packages/swift/README.md`](../packages/swift/README.md)), then:
 
 ```swift
 import NeetixLiveliness

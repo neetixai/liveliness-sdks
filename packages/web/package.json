@@ -1,0 +1,55 @@
+{
+  "name": "@neetix/liveliness",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for the Neetix Liveliness API \u2014 face match, passive/active/streaming liveliness, age check, AML screening, MRZ parsing, and prepaid-credit billing. Zero runtime dependencies (fetch-based).",
+  "license": "Apache-2.0",
+  "author": "Neetix",
+  "homepage": "https://liveliness.neetix.in",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neetixai/liveliness-sdks.git",
+    "directory": "packages/web"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build",
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "kyc",
+    "liveness",
+    "face-match",
+    "biometrics",
+    "aml",
+    "mrz",
+    "neetix"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
