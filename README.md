@@ -64,15 +64,17 @@ Runnable end-to-end version (signup → age check → face match → balance):
 |---|---|---|---|
 | Web / Node (TypeScript) | [`@neetix/liveliness`](packages/web/) | **beta** | `npm i @neetix/liveliness` — [README](packages/web/README.md) |
 | Flutter / Dart | [`neetix_liveliness`](packages/flutter/) | **beta** | pub.dev or a git dependency (`path: packages/flutter`) — [README](packages/flutter/README.md) |
-| iOS / macOS (Swift) | [`NeetixLiveliness`](packages/swift/) | **beta** | SPM / CocoaPods — [README](packages/swift/README.md) |
-| Android (Kotlin) | [`in.neetix:liveliness-android`](packages/android/) | **beta** | JitPack / included module — [README](packages/android/README.md) |
+| iOS / macOS (Swift) | [`NeetixLiveliness`](packages/swift/) | **beta** | **SPM, live:** `.package(url: "https://github.com/neetixai/liveliness-sdks.git", from: "0.2.0")` — [README](packages/swift/README.md) |
+| Android (Kotlin) | [`liveliness-android`](packages/android/) | **beta** | **JitPack, live:** `implementation("com.github.neetixai:liveliness-sdks:0.2.0")` — [README](packages/android/README.md) |
 | React Native | [`@neetix/liveliness-react-native`](packages/react-native/) | **pre-release** | `npm i @neetix/liveliness-react-native` — [README](packages/react-native/README.md) |
 | On-device WASM (browser) | [`@neetix/edge`](packages/edge/) | **preview** | `npm i @neetix/edge` — [README](packages/edge/README.md) |
 | On-device capture widget | [`@neetix/edge-widget`](packages/edge-widget/) | **preview** | `npm i @neetix/edge-widget` — [README](packages/edge-widget/README.md) |
 
-> Registry publishing is pending the account setup in
-> [PUBLISHING.md](PUBLISHING.md); until a package is live, install it from this
-> repo (git dependency / included module). All versions move in lockstep —
+> **Live now, no accounts needed:** Swift via SPM and Android via JitPack, both
+> resolving off the `0.2.0` git tag and both verified from a throwaway consumer
+> project. npm (`@neetix` scope), pub.dev and CocoaPods trunk still need their
+> accounts — see [PUBLISHING.md](PUBLISHING.md); until then install those from
+> this repo (git dependency / included module). All versions move in lockstep —
 > currently **0.2.0**.
 
 **Status honesty.** *beta* = typechecked/compiled and unit-tested by

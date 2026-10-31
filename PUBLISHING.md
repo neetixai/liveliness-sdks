@@ -123,9 +123,33 @@ Kotlin/JVM build (`just android`) that must not need the Android SDK.
 git tag 0.2.0 && git push origin 0.2.0
 ```
 
-Consumers use `maven { url "https://jitpack.io" }` with
-`com.github.neetixai.liveliness-sdks:liveliness-android:0.2.0` (JitPack's
-group is `com.github.<owner>`, not `in.neetix`).
+**PUBLISHED and consumer-verified (0.2.0, 2026-10-31).** The real coordinates
+are **`com.github.neetixai:liveliness-sdks:0.2.0`** — note this is *not*
+`com.github.neetixai.liveliness-sdks:liveliness-android`, which is what the
+multi-module convention would suggest. JitPack found a single artifact
+(`in.neetix:liveliness-android:0.2.0`) and republished it under the repo-level
+name. Always read the tail of `build.log` for the coordinates JitPack actually
+minted rather than predicting them:
+
+```
+https://jitpack.io/com/github/neetixai/liveliness-sdks/0.2.0/build.log
+```
+
+Consumer setup:
+
+```kotlin
+// settings.gradle.kts
+repositories { maven { url = uri("https://jitpack.io") } }
+// build.gradle.kts
+implementation("com.github.neetixai:liveliness-sdks:0.2.0")
+```
+
+Verified from a throwaway project: resolves the 403KB AAR plus every transitive
+dependency (okhttp 4.12.0, kotlinx-serialization-json 1.6.3,
+kotlinx-coroutines 1.8.0, okio, kotlin-stdlib).
+
+The `in.neetix` group in `packages/android/build.gradle.kts` only takes effect
+for a Maven Central release (Option B).
 
 **Option B — Maven Central (real `in.neetix` coordinates).** Needs a Sonatype
 **Central Portal** account, the **`in.neetix` namespace** verified by a DNS TXT
@@ -169,6 +193,6 @@ pub.dev → CocoaPods. JitPack and SPM need only the tag.
 | pub.dev | Google sign-in (browser flow); optional `neetix.in` verified publisher |
 | CocoaPods | `pod trunk register` email verification + the `0.2.0` tag |
 | SPM (versioned) | decide: branch-based resolution, or a `liveliness-swift` root mirror |
-| JitPack | no account; repo needs a root Gradle wrapper/settings + `jitpack.yml` |
+| JitPack | **DONE** — no account; published as `com.github.neetixai:liveliness-sdks` |
 | Maven Central | Central Portal account + DNS-verified `in.neetix` + GPG key + vanniktech plugin |
 | `@neetix/edge` (match) | production recognizer weights — licensed or self-trained |

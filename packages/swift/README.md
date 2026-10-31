@@ -14,10 +14,12 @@ before shipping (camera + App Attest don't exist on simulators/macOS).
 
 ## Install (Swift Package Manager)
 
+Pin a release tag — `0.2.0` is live and resolution-verified:
+
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/neetixai/liveliness-sdks", branch: "main")
+    .package(url: "https://github.com/neetixai/liveliness-sdks.git", from: "0.2.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
@@ -26,9 +28,13 @@ targets: [
 ]
 ```
 
-> The SPM package manifest lives in `swift/`; if your SPM version does not
-> discover nested packages, add the repo in Xcode via
-> File > Add Package Dependencies with the same URL.
+In Xcode: File > Add Package Dependencies, same URL, "Up to Next Major".
+
+> SwiftPM only reads `Package.swift` at the **repository root**, so the root
+> manifest is the one consumers resolve; it points at
+> `packages/swift/Sources/NeetixLiveliness`. `packages/swift/Package.swift`
+> exists for `swift build` inside that directory — if you change one, change
+> both.
 
 ## Quickstart (10 lines)
 

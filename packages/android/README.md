@@ -19,9 +19,39 @@ Status, honestly:
   JVM verification stays green. Build it inside your app project and report
   issues.
 
-## Install (source drop-in, for now)
+## Install (JitPack)
 
-There is no Maven artifact yet. Either:
+Published and consumer-verified as of **0.2.0**:
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+
+// build.gradle.kts
+implementation("com.github.neetixai:liveliness-sdks:0.2.0")
+```
+
+The artifact id is the repo name, not `liveliness-android` — JitPack
+republished the single artifact under the repo-level coordinates. The
+`in.neetix` group only applies to a future Maven Central release
+(PUBLISHING.md §4).
+
+okhttp, kotlinx-serialization and kotlinx-coroutines come in transitively; the
+serialization **compiler plugin** does not, so your app module still needs
+`id("org.jetbrains.kotlin.plugin.serialization")` if it touches the
+`@Serializable` models directly.
+
+The optional CameraX + Play Integrity capture code
+(`capture/src/main/kotlin/`) is **not** in the published artifact — it is
+pre-release and uncompiled here. Take it as source or an included module.
+
+### Alternative: source drop-in / included module
 
 1. Copy `src/main/kotlin/in/neetix/liveliness/` into your app module and add
    the three dependencies from `build.gradle.kts` (plus, optionally,
