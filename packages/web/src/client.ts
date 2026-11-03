@@ -115,7 +115,9 @@ export class NeetixClient {
   // ---------- Account ----------
 
   /**
-   * Self-serve trial signup — no auth needed. Grants 500 free credits.
+   * Self-serve trial signup — no auth needed. Grants 1,000 free credits
+   * (`billing.signup_credits`); the separate `monthly_quota: 500` in the
+   * response is the rate cap, not the grant — do not conflate them.
    * The returned `api_key` is shown ONCE; persist it.
    */
   async signup(email: string): Promise<SignupResponse> {
